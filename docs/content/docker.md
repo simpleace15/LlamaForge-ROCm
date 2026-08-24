@@ -32,18 +32,21 @@ when present and falls back to VRAM-only KFD data otherwise.
 The build targets a broad default set of AMD architectures:
 
 ```
-gfx900;gfx906;gfx908;gfx90a;gfx942;gfx1010;gfx1030;gfx1100;gfx1101;gfx1102
+gfx908;gfx90a;gfx942;gfx1030;gfx1100;gfx1101;gfx1102;gfx1150;gfx1151;gfx1200;gfx1201
 ```
 
 | Arch | GPUs |
 |------|------|
-| `gfx900` / `gfx906` | Vega 56/64, Radeon VII, MI50/MI60 |
 | `gfx908` | Instinct MI100 |
 | `gfx90a` | Instinct MI200 (MI210/MI250/MI250X) |
 | `gfx942` | Instinct MI300 (MI300X/MI300A) |
-| `gfx1010` | RX 5000 series |
 | `gfx1030` | RX 6000 series, Radeon Pro V620 |
 | `gfx1100`/`gfx1101`/`gfx1102` | RX 7000 series |
+| `gfx1150`/`gfx1151` | RX 8000 series |
+| `gfx1200`/`gfx1201` | RX 9000 series |
+
+> Vega (`gfx900`/`gfx906`) and RX 5000 (`gfx1010`) are omitted — ROCm 7.x
+> dropped them. Use a ROCm 6.x base image if you need those older GPUs.
 
 Narrow the list to your own GPU(s) for a much faster build:
 
@@ -75,9 +78,10 @@ docker build --build-arg AMDGPU_TARGETS=gfx1030 -t llamaforge-rocm .
 docker build --build-arg LLAMACPP_REF=master -t llamaforge-rocm .
 ```
 
-The image is a two-stage build on `rocm/dev-ubuntu-22.04`: stage 1 clones and
-compiles llama.cpp with `GGML_HIP=ON` + `AMDGPU_TARGETS`, stage 2 copies the
-`llama-server` binary and the pure-stdlib LlamaForge backend into a runtime
+The image is a two-stage build on `rocm/dev-ubuntu-24.04:7.2.1` (matching
+llama.cpp's own ROCm image): stage 1 clones and compiles llama.cpp with
+`GGML_HIP=ON` + `AMDGPU_TARGETS` on the `-complete` toolchain image, stage 2
+copies the `llama-server` binary and its HIP backend `.so` files into a runtime
 image.
 
 ### Run (docker-compose)

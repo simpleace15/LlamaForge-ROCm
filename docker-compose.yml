@@ -16,7 +16,7 @@ services:
       context: .
       args:
         # Narrow this to your GPU(s) for a much faster build. Broad default:
-        #   gfx900;gfx906;gfx908;gfx90a;gfx942;gfx1010;gfx1030;gfx1100;gfx1101;gfx1102
+        #   gfx908;gfx90a;gfx942;gfx1030;gfx1100;gfx1101;gfx1102;gfx1150;gfx1151;gfx1200;gfx1201
         # Examples: RX 6000 -> gfx1030, RX 7000 -> gfx1100, MI200 -> gfx90a, MI300 -> gfx942
         AMDGPU_TARGETS: "gfx1030;gfx1100;gfx90a;gfx942"
     image: llamaforge-rocm:latest
