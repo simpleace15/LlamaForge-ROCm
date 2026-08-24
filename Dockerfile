@@ -67,6 +67,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=build /src/build/bin/llama-server /usr/local/bin/llama-server
 COPY --from=build /src/lib/ /usr/local/bin/
 
+# The .so files (libllama-server-impl.so, libggml-hip.so, ...) live in
+# /usr/local/bin next to the binary, but the dynamic linker does not search
+# there by default. Without this, llama-server fails at startup with
+# "libllama-server-impl.so: cannot open shared object file".
+ENV LD_LIBRARY_PATH=/usr/local/bin
+
 # LlamaForge backend (pure stdlib) + web UI.
 WORKDIR /app
 COPY backend ./backend
