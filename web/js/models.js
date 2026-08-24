@@ -52,7 +52,7 @@ export function renderGpus(g) {
     setHTML($("#gpus"), `<div class="gpu"><div class="stats">GPU telemetry unavailable</div></div>`);
     return;
   }
-  setHTML($("#gpus"), g.map(x => `<div class="gpu"><div class="top"><span class="name">${esc(x.name)}</span><span class="idx">CUDA${esc(x.index)}</span></div>
+  setHTML($("#gpus"), g.map(x => `<div class="gpu"><div class="top"><span class="name">${esc(x.name)}</span><span class="idx">${esc(x.vendor === "amd" ? "ROCm" : "CUDA")}${esc(x.index)}</span></div>
     <div class="meter">${meter(x.used,x.total)}</div>
     <div class="stats"><span><b>${esc((x.used/1024).toFixed(1))}</b>/${esc((x.total/1024).toFixed(1))} GB</span><span>FREE <b>${esc(((x.total-x.used)/1024).toFixed(1))}</b> GB</span><span>UTIL <b>${esc(x.util)}%</b></span><span>TEMP <b>${esc(x.temp)}&deg;C</b></span></div></div>`).join(""));
 }

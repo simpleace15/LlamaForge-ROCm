@@ -101,12 +101,15 @@ class H(BaseHTTPRequestHandler):
         """Reject anything that isn't this dashboard's own page talking to it.
         Returns True when the request has been answered and must not proceed."""
         port = routes.cfg()["panel_port"]
-        if not _host_ok(self.headers.get("Host", ""), port):
-            self._send(403, {"error": "bad Host header"})
-            return True
-        if not _origin_ok(self.headers.get("Origin", ""), port):
-            self._send(403, {"error": "cross-origin request refused"})
-            return True
+        # When the panel is bound to 0.0.0.0 (Docker / LAN), the Host header is
+        # the host's address, not loopback — relax the Host check accordingly.
+        if routes.cfg().get("panel_host", "127.0.0.1") == "127.0.0.1":
+            if not _host_ok(self.headers.get("Host", ""), port):
+                self._send(403, {"error": "bad Host header"})
+                return True
+            if not _origin_ok(self.headers.get("Origin", ""), port):
+                self._send(403, {"error": "cross-origin request refused"})
+                return True
         if method == "POST":
             # A cross-site <form> can only send urlencoded/multipart/text-plain.
             # Requiring JSON means a forged post needs a preflight it can't pass.
@@ -320,7 +323,8 @@ def main():
     config.migrate()
     c = routes.cfg()
     port = c["panel_port"]
-    print(f"LlamaForge -> http://127.0.0.1:{port}")
+    host = c.get("panel_host", "127.0.0.1")
+    print(f"LlamaForge -> http://{host}:{port}")
     if config.LOAD_ERROR:
         print(f"  WARNING: {config.LOAD_ERROR}")
         print(f"  previous contents saved to {config.CONFIG}.corrupt")
@@ -345,7 +349,7 @@ def main():
         import threading
         threading.Thread(target=_auto_load, args=(c["auto_load_model"],),
                          daemon=True, name="auto-load").start()
-    ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
+    ThreadingHTTPServer((c.get("panel_host", "127.0.0.1"), port), H).serve_forever()
 
 
 if __name__ == "__main__":

@@ -201,20 +201,58 @@ def gpus():
 def _gpu_telemetry():
     if osplat.IS_MAC:
         return osplat.mac_gpu_telemetry()
+    res = []
+    # NVIDIA first (nvidia-smi), then AMD (rocm-smi if present, else KFD-only).
     try:
         out = subprocess.check_output(
             ["nvidia-smi",
              "--query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu",
              "--format=csv,noheader,nounits"], text=True, timeout=8)
-    except Exception as e:
-        return [{"error": str(e)}]
-    res = []
-    for ln in out.strip().splitlines():
-        f = [x.strip() for x in ln.split(",")]
-        if len(f) >= 6:
-            res.append({"index": int(f[0]), "name": f[1], "used": int(f[2]),
-                        "total": int(f[3]), "util": int(f[4]), "temp": int(f[5])})
+        for ln in out.strip().splitlines():
+            f = [x.strip() for x in ln.split(",")]
+            if len(f) >= 6:
+                res.append({"index": int(f[0]), "name": f[1], "used": int(f[2]),
+                            "total": int(f[3]), "util": int(f[4]), "temp": int(f[5]),
+                            "vendor": "nvidia"})
+    except Exception:
+        pass
+    res.extend(_amd_telemetry())
+    if not res:
+        return [{"error": "no GPU telemetry available (nvidia-smi / rocm-smi not found)"}]
     return res
+
+
+def _amd_telemetry():
+    """AMD GPU telemetry: rocm-smi when available, else KFD topology (VRAM only)."""
+    amd = hardware.detect_amd_gpus()
+    if not amd:
+        return []
+    # Try rocm-smi for live util/temp/used; fall back to KFD VRAM totals.
+    try:
+        out = subprocess.check_output(
+            ["rocm-smi", "--showmeminfo", "vram", "--showuse", "--showtemp",
+             "--json"], text=True, timeout=8)
+        import json as _json
+        data = _json.loads(out)
+        rows = []
+        for card_id, card in data.items():
+            vram = card.get("VRAM") or {}
+            used = int(vram.get("Total Used Memory (B)", 0)) // (1024 * 1024)
+            total = int(vram.get("Total Memory (B)", 0)) // (1024 * 1024)
+            util = int(card.get("GPU use (%)", 0) or 0)
+            temp = int(card.get("Temperature (Sensor edge) (C)", 0) or 0)
+            name = card.get("Card series", "") or card.get("Card model", "")
+            rows.append({"index": int(card_id), "name": name or f"AMD GPU {card_id}",
+                         "used": used, "total": total, "util": util, "temp": temp,
+                         "vendor": "amd"})
+        if rows:
+            return rows
+    except Exception:
+        pass
+    # Fallback: KFD topology gives name + total VRAM, no live util/temp.
+    return [{"index": g["index"], "name": g["name"], "used": 0,
+             "total": g["vram_mib"] or 0, "util": 0, "temp": 0, "vendor": "amd"}
+            for g in amd]
 
 
 def _cached_schema(bin_path, cache_holder):
@@ -355,7 +393,7 @@ def _autotune_recommend(body):
         size = os.path.getsize(path)
     except OSError:
         size = None
-    hw = {"gpus": hardware.detect_gpus(), "cpu": hardware.detect_cpu()}
+    hw = {"gpus": hardware.detect_all_gpus(), "cpu": hardware.detect_cpu()}
     pred = None
     try:
         if cfg().get("vram_predict_enabled", True) and path:
@@ -651,7 +689,13 @@ def get_gpus(req):
 
 
 def get_setup(req):
-    return 200, {"prereqs": prereqs.status(), "hardware": hardware.recommend()}
+    return 200, {"prereqs": prereqs.status(), "hardware": _recommend_with_cfg()}
+
+
+def _recommend_with_cfg():
+    """hardware.recommend() with the user's configured AMDGPU_TARGETS override."""
+    c = cfg()
+    return hardware.recommend(amd_targets=c.get("amd_gpu_targets") or None)
 
 
 def get_build_info(req):
@@ -670,7 +714,7 @@ def get_build_info(req):
         "target": target,
         "current": builder.current_commit(src),
         "updates": builder.check_updates(src, force=req.flag("force")),
-        "recommended_flags": hardware.recommend()["cmake_flags"],
+        "recommended_flags": _recommend_with_cfg()["cmake_flags"],
         "saved_flags": saved_flags,
         "remote": remote,
     }

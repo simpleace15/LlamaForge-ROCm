@@ -1,0 +1,58 @@
+# LlamaForge-ROCm — Docker Compose with correct ROCm GPU passthrough.
+#
+# GPU passthrough is MANDATORY for AMD GPUs. Three things must line up or the
+# container sees zero GPUs:
+#   1. /dev/kfd            — the ROCm kernel-fusion driver device
+#   2. one render node per GPU — /dev/dri/renderD128, renderD129, renderD130, ...
+#   3. group_add: video    — the container user must be in the `video` group
+#      (render nodes are owned by root:video, mode 0660)
+#
+# Add one renderD* line per physical GPU. `rocm-smi` inside the container lists
+# them; `ls /dev/dri/renderD*` on the host shows how many you have.
+
+services:
+  llamaforge:
+    build:
+      context: .
+      args:
+        # Narrow this to your GPU(s) for a much faster build. Broad default:
+        #   gfx900;gfx906;gfx908;gfx90a;gfx942;gfx1010;gfx1030;gfx1100;gfx1101;gfx1102
+        # Examples: RX 6000 -> gfx1030, RX 7000 -> gfx1100, MI200 -> gfx90a, MI300 -> gfx942
+        AMDGPU_TARGETS: "gfx1030;gfx1100;gfx90a;gfx942"
+    image: llamaforge-rocm:latest
+    container_name: llamaforge-rocm
+
+    # --- ROCm device passthrough (mandatory) ---
+    devices:
+      - /dev/kfd:/dev/kfd
+      # one render node per GPU — add/remove lines to match your host
+      - /dev/dri/renderD128:/dev/dri/renderD128
+      - /dev/dri/renderD129:/dev/dri/renderD129
+      - /dev/dri/renderD130:/dev/dri/renderD130
+      - /dev/dri/renderD131:/dev/dri/renderD131
+
+    group_add:
+      - video          # render nodes are root:video 0660
+
+    # Shared memory + IPC: llama.cpp needs a large /dev/shm for multi-GPU and
+    # large-context KV caches; ipc=host lets the router and dashboard share it.
+    ipc: host
+    shm_size: "16gb"
+
+    ports:
+      - "8080:8080"    # llama.cpp router (OpenAI-compatible API + chat UI)
+      - "8090:8090"    # LlamaForge dashboard
+
+    environment:
+      # Optional: require an API key on the router (recommended — the router is
+      # exposed on 0.0.0.0). Leave empty to run unauthenticated.
+      ROUTER_API_KEY: ""
+      # Optional: narrow the AMDGPU_TARGETS used at runtime detection (build arg
+      # already fixed the binary; this only affects the Setup tab's suggestion).
+      # AMDGPU_TARGETS: "gfx1030"
+
+    volumes:
+      - ./config:/app/config    # config.json, models.ini, logs
+      - ./models:/app/models    # your GGUF model files
+
+    restart: unless-stopped

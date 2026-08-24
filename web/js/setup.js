@@ -37,13 +37,17 @@ export async function loadSetup() {
     <span class="v ${t.present?'ok':'bad'}">${t.present?esc(t.version||"present"):"MISSING"}
     ${!t.present&&t.installable?` <button data-install="${esc(name)}" style="padding:3px 8px;margin-left:8px">Install</button>`:""}
     ${!t.present&&!t.installable&&t.hint?`<div class="note" style="margin-top:4px">${esc(t.hint)}</div>`:""}</span></div>`;
-  const gpuLines = (hw.gpus||[]).map(g => `<div class="kv"><span class="k">GPU ${esc(g.index)}</span><span class="v">${esc(g.name)} &middot; cc ${esc(g.compute_cap||"?")}</span></div>`).join("");
+  const gpuLines = (hw.gpus||[]).map(g => {
+    const arch = g.gfx_arch ? `gfx ${esc(g.gfx_arch)}` : `cc ${esc(g.compute_cap||"?")}`;
+    return `<div class="kv"><span class="k">GPU ${esc(g.index)}</span><span class="v">${esc(g.name)} &middot; ${arch}</span></div>`;
+  }).join("");
   const bw = cfgOf().vram_bandwidths || {};
   setHTML(v, `
     <div class="card"><h3>Prerequisites</h3>
       ${Object.entries(p.tools).map(([n,t])=>toolRow(n,t)).join("")}
       <div class="kv"><span class="k">${esc(p.msvc.label||"C++ compiler")}</span><span class="v ${p.msvc.present?'ok':'bad'}">${p.msvc.present?"present":"MISSING"+(p.msvc.url?" &mdash; "+esc(p.msvc.url):"")}</span></div>
       ${p.cuda.applicable===false?"":`<div class="kv"><span class="k">CUDA toolkit</span><span class="v ${p.cuda.present?'ok':'bad'}">${p.cuda.present?esc(p.cuda.version||"present"):"not found (CPU build only)"}</span></div>`}
+      ${p.rocm&&p.rocm.applicable===false?"":`<div class="kv"><span class="k">ROCm / HIP</span><span class="v ${p.rocm&&p.rocm.present?'ok':'bad'}">${p.rocm&&p.rocm.present?esc(p.rocm.version||"present"):"not found (CPU build only)"}</span></div>`}
       <div class="kv"><span class="k">installers</span><span class="v">${esc(Object.keys(p.installers||{}).filter(k=>p.installers[k]).join(" ")||"none")}</span></div>
       <div class="note">Missing prerequisites can be installed with your permission where a package manager allows it (winget/choco/brew). On Linux the exact install command is shown instead &mdash; the dashboard never runs sudo.</div>
     </div>

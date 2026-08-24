@@ -108,6 +108,30 @@ def find_cuda():
     return {"present": False, "applicable": True,
             "url": "https://developer.nvidia.com/cuda-downloads (needed only for NVIDIA GPU builds)"}
 
+def find_rocm():
+    """ROCm/HIP toolkit presence for AMD GPU builds (Linux only).
+
+    Detects hipcc (the HIP compiler) and the amdgpu kernel driver. ROCm is only
+    relevant on Linux; on Windows/macOS the row is hidden like CUDA on macOS.
+    """
+    if not osplat.IS_LINUX:
+        return {"present": False, "applicable": False}
+    hipcc = _which("hipcc")
+    ver = ""
+    if hipcc:
+        try:
+            out = subprocess.run([hipcc, "--version"], capture_output=True, text=True, timeout=8).stdout
+            import re
+            m = re.search(r"HIP version:\s*([\d.]+)", out) or re.search(r"([\d.]+)", out)
+            ver = m.group(1) if m else ""
+        except Exception:
+            pass
+    # amdgpu driver loaded? (KFD sysfs node present)
+    kfd = os.path.isdir("/sys/class/kfd/kfd")
+    return {"present": bool(hipcc), "applicable": True, "version": ver,
+            "path": hipcc or "", "driver_loaded": kfd,
+            "url": "https://rocm.docs.amd.com/en/latest/deploy/linux/quick_start.html"}
+
 def installers():
     if osplat.IS_WIN:
         return {"winget": bool(_which("winget")), "choco": bool(_which("choco"))}
@@ -138,6 +162,7 @@ def status():
         "tools": tools,
         "msvc": find_compiler(),         # key kept for UI compat; now platform-generic
         "cuda": find_cuda(),
+        "rocm": find_rocm(),
         "installers": installers(),
         "platform": osplat.current(),
     }

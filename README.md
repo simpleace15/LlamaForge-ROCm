@@ -20,7 +20,12 @@
   <img alt="repo size" src="https://img.shields.io/github/repo-size/dadwritestech/LlamaForge?style=flat-square&labelColor=0f1315&color=6b7a7e&cacheSeconds=1800">
 </p>
 
-# LlamaForge
+# LlamaForge-ROCm
+
+> **A fork of [LlamaForge](https://github.com/dadwritestech/LlamaForge) adding
+> ROCm (AMD GPU) support and Docker deployment.** Everything else is upstream
+> LlamaForge, kept in sync. This fork is an independent project, not affiliated
+> with the upstream LlamaForge maintainer, who is credited below.
 
 A graphical control panel for [llama.cpp](https://github.com/ggml-org/llama.cpp):
 build it, keep it current with upstream, discover models that fit your hardware,
@@ -31,7 +36,7 @@ of hand-editing `models.ini` and long `llama-server` command lines.
 memorize flags, edit config files by hand, or babysit build commands. It assumes
 you're comfortable running a setup script once and building llama.cpp for your
 machine — both guided from the dashboard. Windows with an NVIDIA GPU is the
-primary target (CPU-only works too); **Linux** (NVIDIA/CPU) and **macOS**
+primary target (CPU-only works too); **Linux** (NVIDIA/CPU/**AMD ROCm**) and **macOS**
 (Apple Silicon, Metal) are supported as an early preview — same dashboard,
 `bootstrap.sh` instead of `bootstrap.ps1`. **Looking for something else?** If you want a zero-config, double-click
 installer with no compile step, [LM Studio](https://lmstudio.ai),
@@ -108,6 +113,59 @@ The same dashboard runs everywhere; only the launcher scripts differ.
 | bootstrap | `bootstrap.ps1` | `bootstrap.sh` | `bootstrap.sh` |
 | daily run | `LlamaForge.vbs` | `./run.sh` | `./run.sh` |
 | package manager (Setup tab) | winget / choco | apt / dnf / pacman *(commands shown, never auto-`sudo`)* | Homebrew |
+
+## ROCm (AMD GPU) support
+
+This fork adds **ROCm/HIP** as a first-class accelerator alongside CUDA/CPU/Metal.
+On a Linux host with AMD GPUs, the Setup and Build tabs detect them and build
+llama.cpp with `GGML_HIP=ON` instead of CUDA.
+
+- **AMD device detection** reads the ROCm KFD topology (`/sys/class/kfd/kfd/topology/nodes`)
+  plus the DRM render nodes (`/dev/dri/renderD*`), so it works with just the
+  `amdgpu` kernel driver loaded — no `rocm-smi` binary required. Live
+  util/temp/used telemetry uses `rocm-smi` when present and falls back to
+  VRAM-only KFD data otherwise.
+- **Configurable `AMDGPU_TARGETS`.** The build targets a broad default set of
+  AMD architectures (Vega, MI100/MI200/MI300, RX 5000/6000/7000). Narrow it to
+  your own GPU(s) for a much faster build by setting `amd_gpu_targets` in
+  `config.json` (e.g. `"gfx1030;gfx1100"`), or pass `--build-arg AMDGPU_TARGETS=...`
+  when building the Docker image. Detected archs are used automatically when
+  the key is left blank.
+- **AMD-aware VRAM-fit ratings.** The Discover tab's FITS/TIGHT/OFFLOAD ratings
+  and the "Will it run?" tok/s estimates now include AMD GPUs (VRAM + memory
+  bandwidth presets for Instinct, Radeon Pro, and RX 5000/6000/7000 parts).
+- **CUDA/CPU/Metal are unchanged** — ROCm is additive. On a machine with both
+  NVIDIA and AMD GPUs, NVIDIA is detected first; on a pure-AMD box the HIP build
+  is selected automatically.
+
+## Docker deployment
+
+A `Dockerfile` and `docker-compose.yml` build the ROCm variant of llama.cpp and
+run the LlamaForge backend in a container — the intended way to run this on
+**Unraid** (or any Docker host with AMD GPUs).
+
+```bash
+# Build (narrow AMDGPU_TARGETS to your GPU for a faster build)
+docker build --build-arg AMDGPU_TARGETS=gfx1030 -t llamaforge-rocm .
+
+# Or use docker-compose (edit the renderD* device list to match your GPUs first)
+docker compose up -d
+```
+
+**GPU passthrough is mandatory** — three things must line up or the container
+sees zero GPUs:
+
+1. `/dev/kfd` — the ROCm kernel-fusion driver device
+2. one render node per GPU — `/dev/dri/renderD128`, `renderD129`, `renderD130`, …
+3. `group_add: video` — render nodes are owned `root:video` mode `0660`
+
+The compose file also sets `ipc: host` and a large `shm_size` (llama.cpp needs
+big shared memory for multi-GPU and large-context KV caches), and mounts two
+volumes: `./config` (config.json, models.ini, logs) and `./models` (your GGUF
+files). The dashboard binds `0.0.0.0:8090` and the router `0.0.0.0:8080` inside
+the container; set `ROUTER_API_KEY` to require a key on the exposed router.
+
+See [docs/content/docker.md](docs/content/docker.md) for the full Unraid walkthrough.
 
 ## Quality-of-life
 
@@ -271,7 +329,29 @@ preview, so priorities follow feedback.
 
 ## Credits & license
 
-LlamaForge is MIT-licensed ([LICENSE](LICENSE)). It builds and drives
+LlamaForge-ROCm is a fork of **[LlamaForge](https://github.com/dadwritestech/LlamaForge)**
+by [dadwritestech](https://github.com/dadwritestech), adding ROCm and Docker
+support. Both are MIT-licensed ([LICENSE](LICENSE)). It builds and drives
 **[llama.cpp](https://github.com/ggml-org/llama.cpp)** - MIT, (c) The ggml authors -
 see [NOTICE](NOTICE) and [LICENSE.llama.cpp.txt](LICENSE.llama.cpp.txt).
-The hard part is theirs; please star and support the upstream project.
+The hard part is theirs; please star and support the upstream projects.
+
+## Keeping in sync with upstream
+
+This fork tracks upstream LlamaForge's `master` branch. To pull in upstream
+changes (the ROCm/Docker additions live on top, so a plain merge is usually clean):
+
+```bash
+git remote add upstream https://github.com/dadwritestech/LlamaForge.git  # once
+git fetch upstream
+git checkout master
+git merge upstream/master --no-edit      # resolve conflicts if any
+git push origin master
+```
+
+The ROCm/Docker changes are deliberately additive and isolated (a new
+`hardware.detect_amd_gpus()` path, a `amd_gpu_targets` config key, and the
+`Dockerfile`/`docker-compose.yml`/`docker-entrypoint.sh` files), so upstream
+merges rarely conflict. If a conflict does arise, it will be in `hardware.py`,
+`routes.py`, `config.py`, or `README.md` — resolve by keeping both the upstream
+change and the ROCm branch.

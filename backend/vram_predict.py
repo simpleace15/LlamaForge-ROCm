@@ -18,23 +18,48 @@ _CACHE = {}
 _CACHE_LOCK = threading.Lock()
 _CFG_CACHE = {}            # repo -> config.json dict (one network call per repo)
 
+# AMD GPU memory bandwidth presets (GB/s), keyed by a normalized substring of
+# the ROCm KFD node name. Kept in the glue layer (not the vendored vramwise
+# catalog) so the read-only snapshot stays verbatim. Unknown AMD parts fall
+# back to C.DEFAULT_VRAM_BW like any unknown GPU.
+_AMD_VRAM_BW = {
+    # Instinct datacenter (gfx90a / gfx942)
+    "mi300x": 5300, "mi300a": 5300, "mi250x": 3276, "mi250": 3276,
+    "mi210": 1638, "mi100": 1229, "mi50": 1024, "mi60": 1024,
+    # Radeon Pro workstation
+    "w7900": 864, "w7800": 576, "w6800": 512, "w6600": 224, "v620": 512,
+    # RX 7000 (gfx1100)
+    "7900 xtx": 960, "7900 xt": 800, "7900 gre": 576, "7800 xt": 624,
+    "7700 xt": 432, "7600": 288,
+    # RX 6000 (gfx1030)
+    "6900 xt": 512, "6800 xt": 512, "6800": 512, "6700 xt": 384,
+    "6600 xt": 256, "6600": 224, "6500 xt": 144,
+    # RX 5000 (gfx1010)
+    "5700 xt": 448, "5700": 448, "5600 xt": 288, "5500 xt": 224,
+}
+
 
 def _preset_vram_bw(name):
-    """Detected nvidia-smi GPU name -> catalog VRAM bandwidth (GB/s); default if unknown."""
+    """Detected GPU name -> catalog VRAM bandwidth (GB/s); default if unknown.
+    Handles NVIDIA (nvidia-smi), AMD (ROCm KFD), and Apple names."""
     n = (name or "").lower()
-    for junk in ("nvidia", "geforce", "rtx", "gtx", " "):
+    for junk in ("nvidia", "geforce", "rtx", "gtx", "radeon", "amd", " "):
         n = n.replace(junk, "")
     for key, (_vram, bw) in catalog.GPUS.items():
         if key.replace("-", "") in n:
+            return bw
+    for key, bw in _AMD_VRAM_BW.items():
+        if key.replace(" ", "") in n:
             return bw
     return C.DEFAULT_VRAM_BW
 
 
 def build_hardware(cfg=None, gpus=None, ram_gb=None):
     """Assemble a vramwise Hardware from detection + config overrides.
-    gpus/ram_gb are injectable for tests; None triggers real detection."""
+    gpus/ram_gb are injectable for tests; None triggers real detection
+    (NVIDIA + AMD, so ROCm hosts get honest VRAM-fit ratings)."""
     cfg = cfg if cfg is not None else config.load()
-    gpus = hardware.detect_gpus() if gpus is None else gpus
+    gpus = hardware.detect_all_gpus() if gpus is None else gpus
     vram_mib = sum((g.get("vram_mib") or 0) for g in gpus)
     ram_gb = hardware.detect_ram_gb() if ram_gb is None else ram_gb
     ram_gb = ram_gb or 16.0

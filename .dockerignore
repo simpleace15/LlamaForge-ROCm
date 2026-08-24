@@ -1,0 +1,15 @@
+.git
+.gitignore
+config.json
+models.ini
+config/
+models/
+logs/
+llama.cpp/
+__pycache__/
+*.pyc
+docs/
+tests/
+tools/
+.github/
+*.md

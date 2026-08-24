@@ -14,7 +14,7 @@ LlamaForge contains no llama.cpp source code. The backend (`backend/server.py`, 
 
 LlamaForge is built for people who want llama.cpp's speed and control but would rather not memorize flags, edit config files by hand, or babysit build commands. It assumes you are comfortable running a setup script once and building llama.cpp for your machine — both are guided from the dashboard.
 
-Windows with an NVIDIA GPU is the primary target (CPU-only also works). Linux (NVIDIA/CPU) and macOS (Apple Silicon, Metal) are supported as an early preview — the same dashboard, launched with `bootstrap.sh` instead of `bootstrap.ps1`.
+Windows with an NVIDIA GPU is the primary target (CPU-only also works). Linux (NVIDIA/CPU/**AMD ROCm**) and macOS (Apple Silicon, Metal) are supported as an early preview — the same dashboard, launched with `bootstrap.sh` instead of `bootstrap.ps1`. A Docker image adds ROCm + container deployment for AMD GPU hosts (see [Docker & ROCm](docker.md)).
 
 > [!NOTE]
 > If you want a zero-config, double-click installer with no compile step, [LM Studio](https://lmstudio.ai), [Ollama](https://ollama.com), or [Jan](https://jan.ai) will get you running faster. LlamaForge trades that convenience for direct, per-model control over the real llama.cpp server.
@@ -28,7 +28,7 @@ LlamaForge runs two local HTTP services:
 | Dashboard (panel) | `http://127.0.0.1:8090` | The LlamaForge backend and web UI — Models, Stats, Discover, Build, Setup tabs. Always binds to `127.0.0.1` only. |
 | Router | `http://127.0.0.1:8080` | llama.cpp's own server process, started by LlamaForge with `--models-preset models.ini`. Serves the OpenAI-compatible API and llama.cpp's chat UI. |
 
-Both ports, along with the bind address, are configured by the `panel_port`, `router_port`, and `router_host` keys in `config.json` (defaults `8090`, `8080`, and `127.0.0.1`). The router's bind address can be widened to `0.0.0.0` from the Setup tab's Network Access panel to reach it from other devices on your LAN; the dashboard itself never leaves `127.0.0.1`.
+Both ports, along with the bind address, are configured by the `panel_port`, `router_port`, `panel_host`, and `router_host` keys in `config.json` (defaults `8090`, `8080`, `127.0.0.1`, and `127.0.0.1`). The router's bind address can be widened to `0.0.0.0` from the Setup tab's Network Access panel to reach it from other devices on your LAN; the dashboard itself stays on `127.0.0.1` unless `panel_host` is set to `0.0.0.0` (the Docker image does this so the host can reach it through a port mapping).
 
 Clients — `curl`, an OpenAI SDK, or any OpenAI-compatible chat client — talk to the router, not the dashboard. The dashboard's job is configuration: it writes model presets into `models.ini`, starts and stops the router, and reads back the router's own metrics endpoint for the Stats tab.
 

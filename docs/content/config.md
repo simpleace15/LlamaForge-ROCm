@@ -19,11 +19,13 @@ order: 1
 | `model_dirs` | list | `[]` | Directories the Discover/scan feature searches for GGUF files. |
 | `router_port` | int | `8080` | Port `llama-server` (the router) listens on. |
 | `panel_port` | int | `8090` | Port the LlamaForge dashboard (`backend/server.py`) listens on. |
+| `panel_host` | string | `"127.0.0.1"` | Dashboard bind address. `127.0.0.1` = local only; `0.0.0.0` = reachable on the LAN / from a Docker host. |
 | `router_host` | string | `"127.0.0.1"` | Router bind address. `127.0.0.1` = local only; `0.0.0.0` = reachable on the LAN. |
 | `router_api_key` | string | `""` | API key required from clients when `router_host` is not `127.0.0.1`. |
 | `wsl_distro` | string | `""` | WSL distro that runs vLLM. Empty string auto-picks the default distro. |
 | `vllm_port` | int | `8081` | Port vLLM serves on inside WSL (localhost-forwarded to Windows). |
 | `cmake_flags` | object | `{}` | Persisted CMake build flags, normally seeded from hardware detection. |
+| `amd_gpu_targets` | string | `""` | `AMDGPU_TARGETS` for ROCm/HIP builds. Empty = auto-detect from the installed AMD GPUs (falling back to a broad default); otherwise a `;`-joined list, e.g. `"gfx1030;gfx1100"`. |
 | `git_remote` | string | `"https://github.com/ggml-org/llama.cpp"` | Remote used to clone/update the `llama.cpp` source. |
 | `active_engine` | string | `"llamacpp"` | Which llama-family binary the router uses: `"llamacpp"` or `"ikllama"`. |
 | `ik_llama_src` | string | `""` | Path to a git checkout of `ik_llama.cpp`. |
@@ -48,7 +50,7 @@ order: 1
 | `vram_predict_enabled` | bool | `True` | Whether the offline VRAM-fit/tok-s estimate is computed (Discover, on expand). |
 | `docs_dir` | string | `""` | Directory the in-app docs viewer reads from. Empty string resolves to `<repo root>/docs/content`. |
 
-35 keys total, matching `DEFAULTS` in `backend/config.py`.
+37 keys total, matching `DEFAULTS` in `backend/config.py`.
 
 ## Loading and saving
 

@@ -8,7 +8,10 @@ import copy, json, os, re, threading
 import atomicio, gguf
 
 ROOT      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG    = os.path.join(ROOT, "config.json")
+# LLAMAFORGE_CONFIG_DIR lets a container (or any install) relocate config.json
+# and models.ini to a mounted volume; defaults to the repo root otherwise.
+_CONFIG_DIR = os.environ.get("LLAMAFORGE_CONFIG_DIR") or ROOT
+CONFIG    = os.path.join(_CONFIG_DIR, "config.json")
 
 # The dashboard is a ThreadingHTTPServer with background workers (stats poller,
 # build/download threads), and config.json is edited by load->mutate->save at
@@ -25,15 +28,17 @@ DEFAULTS = {
     "llama_src":   "",                       # git checkout of llama.cpp
     "build_dir":   "",                       # cmake build dir (usually <src>/build)
     "server_bin":  "",                       # path to llama-server(.exe)
-    "models_ini":  os.path.join(ROOT, "models.ini"),
+    "models_ini":  os.path.join(_CONFIG_DIR, "models.ini"),
     "model_dirs":  [],                       # directories to scan for GGUFs
     "router_port": 8080,
     "panel_port":  8090,
+    "panel_host":  "127.0.0.1",               # dashboard bind address; 0.0.0.0 = reachable on the LAN / from a Docker host
     "router_host": "127.0.0.1",               # 127.0.0.1 = local only, 0.0.0.0 = reachable on the LAN
     "router_api_key": "",                     # required by clients when router_host != 127.0.0.1
     "wsl_distro":  "",                        # WSL distro that runs vLLM ("" = auto-pick default)
     "vllm_port":   8081,                      # port vLLM serves on (WSL localhost-forwarded to Windows)
     "cmake_flags": {},                       # persisted build flags (from hardware detect)
+    "amd_gpu_targets": "",                   # AMDGPU_TARGETS for ROCm/HIP builds ("" = auto-detect, else e.g. "gfx1030;gfx1100")
     "git_remote":  "https://github.com/ggml-org/llama.cpp",
     # ik_llama mirrors the llama.cpp path trio and, like it, ships empty: these
     # belong to bootstrap and this machine, not to the defaults every install

@@ -13,6 +13,10 @@ __pycache__/
 # a user's cloned engine + build artifacts
 llama.cpp/
 
+# Docker runtime volumes (config + models live on the host, not in git)
+config/
+models/
+
 # local editor / agent tooling config
 .claude/
 CLAUDE.md
