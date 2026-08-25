@@ -18,6 +18,17 @@ export LLAMAFORGE_CONFIG_DIR="$CONFIG_DIR"
 
 mkdir -p "$CONFIG_DIR" "$MODELS_DIR" "$LOG_DIR"
 
+# Pin AMD GPUs to their high performance level. On passive/datacenter cards
+# (e.g. Radeon Pro V620 / Navi 21) the driver's "auto" perf level parks the
+# cards at low clocks during inference, which tanks memory-bandwidth-bound
+# throughput (~5x slower). rocm-smi is present in the -complete runtime image.
+# Best-effort: ignore failure so the container still starts on hosts without
+# ROCm tooling or with non-AMD GPUs.
+if command -v rocm-smi >/dev/null 2>&1; then
+  rocm-smi --setperflevel high >/dev/null 2>&1 || true
+  echo "set AMD GPU performance level to high"
+fi
+
 # Write config.json on first run (never overwrite a user's existing one).
 if [ ! -f "$CFG" ]; then
   cat > "$CFG" <<EOF
