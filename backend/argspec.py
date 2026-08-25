@@ -43,6 +43,8 @@ OVERRIDES = {
     "override-tensor": ("str", None),
     "cpu-range":    ("str", None),
     "cpu-range-batch": ("str", None),
+    "cpu-moe":      ("bool", None),
+    "n-cpu-moe":    ("int", None),
 }
 
 def _classify(placeholder, default):
