@@ -5,6 +5,8 @@
   "models_ini": "./models.ini",
   "model_dirs": [],
   "router_port": 8080,
+  "models_max": 5,
+  "ctx_size": 150000,
   "panel_port": 8090,
   "router_host": "127.0.0.1",
   "router_api_key": "",

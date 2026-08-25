@@ -11,7 +11,7 @@ still OOMs at 150000 on a 32 GB box - so the deletion silently reimposed a
 config that could not load.
 """
 import conftest_paths  # noqa: F401
-import os, tempfile, unittest
+import json, os, tempfile, unittest
 from unittest import mock
 
 import config
@@ -72,3 +72,38 @@ class ApplyCtxDefaultsTest(unittest.TestCase):
         second = self._run(0)
         self.assertEqual(second["changed"], [],
                          "a second pass rewrote sections it had already settled")
+
+
+class ConfiguredGlobalCtxTest(unittest.TestCase):
+    """config.json `ctx_size` drives the [*] global, so lowering the default
+    (to fit more resident models in VRAM) survives a restart instead of being
+    rewritten back to 150000."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = os.path.join(self.dir, "models.ini")
+        self._saved_config = config.CONFIG
+        config.CONFIG = os.path.join(self.dir, "config.json")
+        with open(config.CONFIG, "w", encoding="utf-8") as f:
+            json.dump({"ctx_size": 32768}, f)
+
+    def tearDown(self):
+        config.CONFIG = self._saved_config
+
+    def _write(self, text):
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_global_ctx_size_reads_config(self):
+        self.assertEqual(config.global_ctx_size(), 32768)
+
+    def test_apply_uses_configured_global_not_150000(self):
+        self._write("[a]\nmodel = /m/a.gguf\n")
+        with mock.patch.object(config.gguf, "default_ctx", return_value=0):
+            config.apply_ctx_defaults(self.path)
+        self.assertEqual(config.read_sections(self.path)["*"]["ctx-size"], "32768")
+
+    def test_missing_ctx_size_falls_back_to_150000(self):
+        with open(config.CONFIG, "w", encoding="utf-8") as f:
+            json.dump({}, f)
+        self.assertEqual(config.global_ctx_size(), 150000)

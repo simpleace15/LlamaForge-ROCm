@@ -9,9 +9,8 @@ memory. Any malformed/unreadable file degrades to None; this module never raises
 """
 import struct
 
-# Context-size policy tiers (see default_ctx).
+# Context-size policy (see default_ctx).
 CTX_FULL     = 150000   # baseline default for models that support it
-CTX_FALLBACK = 100000   # cap for models trained below CTX_FULL
 
 # GGUF metadata value types (ggml gguf spec).
 _SCALAR_FMT = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i",
@@ -194,17 +193,23 @@ def metadata(path):
     return {k: v for k, v in out.items() if v is not None}
 
 
-def default_ctx(path):
+def default_ctx(path, full=None):
     """Per-model ctx-size override for a GGUF at `path`.
+
+    `full` is the configured global default (defaults to CTX_FULL). A model that
+    trains to at least `full` needs no override (0); one trained shorter is
+    capped at its own length (never over-extended).
 
     Returns:
         int   - write this exact value as the model's ctx-size
-        0     - no override needed; model supports the CTX_FULL global default
+        0     - no override needed; model supports the global default
         None  - trained length unknown (unreadable/missing); leave the model as-is
     """
+    if full is None:
+        full = CTX_FULL
     n = context_length(path)
     if not n or n <= 0:
         return None
-    if n >= CTX_FULL:
+    if n >= full:
         return 0
-    return min(CTX_FALLBACK, n)   # cap at trained length; never over-extend
+    return min(n, full)   # cap at trained length; never over-extend

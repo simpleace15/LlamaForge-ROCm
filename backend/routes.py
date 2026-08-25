@@ -1220,6 +1220,7 @@ def _v_str(v):   return v if isinstance(v, str) else None
 def _v_port(v):  return v if isinstance(v, int) and 1 <= v <= 65535 else None
 def _v_mode(v):  return v if v in ("lite", "advanced") else None
 def _v_theme(v): return v if v in ("", "light", "dark") else None
+def _v_ctx(v):   return v if isinstance(v, int) and 512 <= v <= 1048576 else None
 def _v_dirs(v):
     return v if isinstance(v, list) and all(isinstance(x, str) for x in v) else None
 
@@ -1244,6 +1245,7 @@ CONFIG_WRITABLE = {
     "cvd":                     _v_bool,
     "onboarded":               _v_bool,
     "auto_load_model":         _v_str,
+    "ctx_size":                _v_ctx,
     "wsl_distro":              _v_str,
     "vllm_port":               _v_port,
     "model_dirs":              _v_dirs,
@@ -1273,6 +1275,14 @@ def post_config(req):
         raise ApiError(400, "not settable via /api/config: " + ", ".join(sorted(rejected)))
     c = config.update(accepted)
     out = {"ok": True, "config": _public_config(c), "applied": sorted(accepted)}
+    # A global ctx-size change rewrites models.ini's [*] section, which the
+    # router reads when it (re)loads models — so re-apply defaults and nudge it.
+    if "ctx_size" in accepted:
+        try:
+            config.apply_ctx_defaults()
+            router("/models?reload=1")
+        except Exception:
+            pass
     if rejected:
         out["rejected"] = sorted(rejected)
     return 200, out

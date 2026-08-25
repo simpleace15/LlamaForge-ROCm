@@ -73,6 +73,9 @@ export async function loadSetup() {
       <div id="missing-out"></div>
     </div>
     <div class="card"><h3>Startup</h3>
+      <div class="kv"><span class="k">default context size</span>
+        <span class="v"><input id="ctx-size" type="number" min="512" step="1024" value="${esc(String(cfgOf().ctx_size ?? 150000))}" style="background:var(--inset);border:1px solid var(--hair);color:var(--ink);font-family:var(--mono);font-size:12px;padding:6px;width:110px"> <button id="ctx-save">Save</button></span></div>
+      <div class="note">The global context window applied to every model without its own override. Lower it to fit more models in VRAM at once (each resident model reserves a KV cache that scales with this). Per-model <b>ctx-size</b> overrides still win.</div>
       <div class="kv"><span class="k">auto-load a model on launch</span>
         <span class="v"><select id="auto-load" style="background:var(--inset);border:1px solid var(--hair);color:var(--ink);font-family:var(--mono);font-size:12px;padding:6px">
           <option value="">none</option>
@@ -125,6 +128,13 @@ export async function loadSetup() {
   if (autoSel) autoSel.onchange = async () => {
     await api("/api/config", {auto_load_model: autoSel.value});
     toast(autoSel.value?`Auto-load: ${autoSel.value}`:"Auto-load disabled", "ok");
+  };
+  const ctxSave = $("#ctx-save");
+  if (ctxSave) ctxSave.onclick = async () => {
+    const val = Number($("#ctx-size").value);
+    if (!Number.isInteger(val) || val < 512) { toast("context size must be ≥ 512", "err"); return; }
+    const r = await api("/api/config", {ctx_size: val});
+    toast(r.ok ? `Default context: ${val}` : "save failed", r.ok ? "ok" : "err");
   };
   const bwSave = $("#bw-save");
   if (bwSave) bwSave.onclick = async () => {

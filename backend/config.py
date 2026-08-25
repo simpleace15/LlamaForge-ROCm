@@ -32,6 +32,7 @@ DEFAULTS = {
     "model_dirs":  [],                       # directories to scan for GGUFs
     "router_port": 8080,
     "models_max":  5,                        # max concurrently-resident models in the router (llama-swap LRU semantics)
+    "ctx_size":    150000,                   # global [*] ctx-size default; per-model overrides win
     "panel_port":  8090,
     "panel_host":  "127.0.0.1",               # dashboard bind address; 0.0.0.0 = reachable on the LAN / from a Docker host
     "router_host": "127.0.0.1",               # 127.0.0.1 = local only, 0.0.0.0 = reachable on the LAN
@@ -425,14 +426,26 @@ def bindings_for_preset(name):
 
 # ---------------- automatic ctx-size defaults ----------------
 
-CTX_GLOBAL_DEFAULT = str(gguf.CTX_FULL)   # "150000"
+CTX_GLOBAL_DEFAULT = str(gguf.CTX_FULL)   # legacy fallback ("150000") when config has no ctx_size
+
+
+def global_ctx_size():
+    """The configured global [*] ctx-size, from config.json's `ctx_size` (default 150000).
+
+    This is what lets the user lower the global default — the thing that matters
+    when several models are resident at once and each reserves a KV cache that
+    scales with ctx-size. Per-model ctx-size overrides still win over this.
+    """
+    return int(load().get("ctx_size", gguf.CTX_FULL))
+
 
 def apply_ctx_defaults(path=None):
     """Set sane ctx-size defaults across models.ini, idempotently.
 
-    - global [*]: ctx-size = 150000 (the baseline for models that support it)
+    - global [*]: ctx-size = the configured global (config.json `ctx_size`,
+      default 150000) — the baseline for models that support it
     - each model with no ctx-size of its own: get one when it can't reach the
-      global - 100000, capped at the model's GGUF-trained length.
+      global, capped at the model's GGUF-trained length.
     - each model that already has one: keep it, except to clamp a value that
       over-extends past the trained length.
 
@@ -450,6 +463,8 @@ def apply_ctx_defaults(path=None):
     path = path or ini_path()
     if not path or not os.path.exists(path):
         return {"changed": []}
+    full = global_ctx_size()
+    glob_default = str(full)
     # Held across the whole scan+rewrite: the decision to drop or set each
     # section's ctx-size is made from `secs`, so a concurrent set_keys between
     # the read and the writes would be silently reverted.
@@ -458,8 +473,8 @@ def apply_ctx_defaults(path=None):
         changed = []
 
         glob = secs.get("*", {})
-        if glob.get("ctx-size") != CTX_GLOBAL_DEFAULT:
-            _set_keys_locked("*", {"ctx-size": CTX_GLOBAL_DEFAULT}, path)
+        if glob.get("ctx-size") != glob_default:
+            _set_keys_locked("*", {"ctx-size": glob_default}, path)
             changed.append("*")
 
         for sec, kv in secs.items():
@@ -468,7 +483,7 @@ def apply_ctx_defaults(path=None):
             mpath = kv.get("model")
             if not mpath:
                 continue
-            d = gguf.default_ctx(mpath)
+            d = gguf.default_ctx(mpath, full=full)
             if d is None:                   # unknown trained length -> leave as-is
                 continue
             cur = kv.get("ctx-size")
@@ -509,5 +524,5 @@ def ensure_models_ini(path=None, defaults=None):
             f.write("; LlamaForge model registry - read by llama-server's router.\n"
                     "; Sections are model ids; keys are llama-server flags.\n"
                     "version = 1\n")
-        _set_keys_locked("*", defaults or {"ctx-size": CTX_GLOBAL_DEFAULT}, path)
+        _set_keys_locked("*", defaults or {"ctx-size": str(global_ctx_size())}, path)
         return True
