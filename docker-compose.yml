@@ -52,7 +52,8 @@ services:
       # AMDGPU_TARGETS: "gfx1030"
 
     volumes:
-      - ./config:/app/config    # config.json, models.ini, logs
+      - ./config:/app/config    # config.json, models.ini
+      - ./logs:/app/logs        # router/build/vllm logs (dashboard reads these)
       - ./models:/app/models    # your GGUF model files
 
     restart: unless-stopped

@@ -9,13 +9,14 @@ set -e
 
 CONFIG_DIR="${CONFIG_DIR:-/app/config}"
 MODELS_DIR="${MODELS_DIR:-/app/models}"
+LOG_DIR="${LOG_DIR:-/app/logs}"
 CFG="$CONFIG_DIR/config.json"
 INI="$CONFIG_DIR/models.ini"
 
 # Point the backend at the mounted config volume (config.json + models.ini).
 export LLAMAFORGE_CONFIG_DIR="$CONFIG_DIR"
 
-mkdir -p "$CONFIG_DIR" "$MODELS_DIR"
+mkdir -p "$CONFIG_DIR" "$MODELS_DIR" "$LOG_DIR"
 
 # Write config.json on first run (never overwrite a user's existing one).
 if [ ! -f "$CFG" ]; then
@@ -72,7 +73,7 @@ if ! lsof -ti tcp:8080 -sTCP:LISTEN >/dev/null 2>&1; then
         --host 0.0.0.0 --port 8080 --metrics)
   [ -n "$ROUTER_API_KEY" ] && args+=(--api-key "$ROUTER_API_KEY")
   /usr/local/bin/llama-server "${args[@]}" \
-    >>"$CONFIG_DIR/router.out.log" 2>>"$CONFIG_DIR/router.err.log" &
+    >>"$LOG_DIR/router.out.log" 2>>"$LOG_DIR/router.err.log" &
   echo "started llama.cpp router on 0.0.0.0:8080"
 fi
 
