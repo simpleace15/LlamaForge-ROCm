@@ -66,6 +66,7 @@ def find_ggufs(roots, min_mb=50):
 
 def _slug(s):
     s = re.sub(r"\.gguf$", "", s, flags=re.I).lower().replace("_", "-").replace(" ", "-")
+    s = re.sub(r"-\d{5}-of-\d{5}$", "", s, flags=re.I)  # strip shard suffix
     s = re.sub(r"[^a-z0-9.\-]", "", s)
     return re.sub(r"-+", "-", s).strip("-")
 
