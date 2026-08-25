@@ -133,6 +133,22 @@ class DownloadManager:
             self._queued_keys.clear()
             return True
 
+    def remove_queued(self, repo, paths, dest_dir):
+        """Remove a specific job from the pending queue (NOT the running job).
+        Returns True if it was found and removed. Leaves the running job and
+        any partial `.part` untouched."""
+        key = self._key(repo, paths, dest_dir)
+        with self.lock:
+            for i, (r, p, d) in enumerate(self._queue):
+                if i == 0:
+                    continue  # never remove the in-flight head
+                if (r, tuple(p), d) == key:
+                    self._queue.pop(i)
+                    self._queued_keys.discard(key)
+                    self.state["queued"] = len(self._queue) - 1
+                    return True
+        return False
+
     def pause(self):
         """Request a pause of the running job (partial file is kept). Returns
         whether one ran."""

@@ -1169,6 +1169,16 @@ def post_hub_cancel(req):
     return 200, {"ok": DOWNLOADS.cancel()}
 
 
+def post_hub_remove_queued(req):
+    """Remove a specific pending job without disturbing the running one."""
+    repo = req.body.get("repo", "")
+    path = req.body.get("path", "")
+    shards = int(req.body.get("shards", 1))
+    paths = hub.shard_paths(path, shards)
+    dest = os.path.join(download_dir(), repo.replace("/", "--"))
+    return 200, {"ok": DOWNLOADS.remove_queued(repo, paths, dest)}
+
+
 def post_hub_pause(req):
     return 200, {"ok": DOWNLOADS.pause()}
 
@@ -1536,6 +1546,7 @@ POST_ROUTES = {
     "/api/vram/predict":        post_vram_predict,
     "/api/hub/download":        post_hub_download,
     "/api/hub/cancel":          post_hub_cancel,
+    "/api/hub/remove-queued":   post_hub_remove_queued,
     "/api/hub/pause":           post_hub_pause,
     "/api/hub/resume":          post_hub_resume,
     "/api/hub/add":             post_hub_add,
