@@ -236,13 +236,26 @@ def _amd_telemetry():
         data = _json.loads(out)
         rows = []
         for card_id, card in data.items():
+            # rocm-smi v4.x emits FLAT keys ("VRAM Total Memory (B)", ...),
+            # not a nested "VRAM" dict. Accept both shapes so we don't break
+            # on either the old or new rocm-smi output format.
+            # Card keys are "card0"/"card1"/... — parse the trailing digits
+            # (int("card0") would raise).
             vram = card.get("VRAM") or {}
-            used = int(vram.get("Total Used Memory (B)", 0)) // (1024 * 1024)
-            total = int(vram.get("Total Memory (B)", 0)) // (1024 * 1024)
-            util = int(card.get("GPU use (%)", 0) or 0)
-            temp = int(card.get("Temperature (Sensor edge) (C)", 0) or 0)
+            total = vram.get("Total Memory (B)") or card.get("VRAM Total Memory (B)", 0)
+            used = vram.get("Total Used Memory (B)") or card.get("VRAM Total Used Memory (B)", 0)
+            # Values may be float strings ("25.0", "32195477504") — parse via
+            # float then int, since int("25.0") raises.
+            used = int(float(used)) // (1024 * 1024)
+            total = int(float(total)) // (1024 * 1024)
+            util = int(float(card.get("GPU use (%)", 0) or 0))
+            temp = int(float(card.get("Temperature (Sensor edge) (C)", 0) or 0))
             name = card.get("Card series", "") or card.get("Card model", "")
-            rows.append({"index": int(card_id), "name": name or f"AMD GPU {card_id}",
+            # Card keys are "card0"/"card1"/... — pull the trailing digits
+            # (int("card0") would raise).
+            digits = "".join(ch for ch in str(card_id) if ch.isdigit())
+            index = int(digits) if digits else 0
+            rows.append({"index": index, "name": name or f"AMD GPU {index}",
                          "used": used, "total": total, "util": util, "temp": temp,
                          "vendor": "amd"})
         if rows:

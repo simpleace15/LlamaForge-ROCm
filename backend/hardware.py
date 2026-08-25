@@ -88,7 +88,13 @@ def _amd_kfd_nodes():
         return
     for node in sorted(os.listdir(base)):
         props = _read(os.path.join(base, node, "properties"))
-        if not props or "gpu_id" not in props:
+        # GPU nodes carry a non-zero gfx_target_version; CPU/IO nodes report 0.
+        # (Older kernels exposed a "gpu_id" field here — do not rely on it, it
+        # is absent on modern kernels such as Unraid 7.x's.)
+        if not props:
+            continue
+        m = re.search(r"gfx_target_version\s+(\d+)", props)
+        if not m or int(m.group(1)) == 0:
             continue
         name = ""
         gfx = ""
