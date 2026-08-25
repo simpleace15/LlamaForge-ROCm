@@ -11,9 +11,8 @@
 #   docker build --build-arg LLAMACPP_REF=master -t llamaforge-rocm .    # pin a llama.cpp ref
 
 # ---- stage 1: build llama.cpp with HIP ----
-# -complete carries the full ROCm toolchain (hipcc/hipconfig) needed to compile;
-# the plain tag is runtime-only and cannot build. Matches llama.cpp's own
-# .devops/rocm.Dockerfile (24.04 + ROCm 7.2.1).
+# -complete carries the full ROCm toolchain (hipcc/hipconfig) needed to compile.
+# Matches llama.cpp's own .devops/rocm.Dockerfile (24.04 + ROCm 7.2.1).
 FROM rocm/dev-ubuntu-24.04:7.2.1-complete AS build
 
 ARG LLAMACPP_REF=master
@@ -52,7 +51,7 @@ RUN mkdir -p /src/lib \
     && find build -name "*.so*" -exec cp -P {} /src/lib \;
 
 # ---- stage 2: runtime ----
-FROM rocm/dev-ubuntu-24.04:7.2.1 AS runtime
+FROM rocm/dev-ubuntu-24.04:7.2.1-complete AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
