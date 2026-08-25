@@ -1,6 +1,6 @@
 """Whether a server binary can actually be the router.
 
-LlamaForge drives the router as `<server_bin> --models-preset <ini> --models-max 1`.
+LlamaForge drives the router as `<server_bin> --models-preset <ini> --models-max N`.
 ik_llama.cpp is a fork of pre-router llama.cpp and rejects that outright:
 
     error: unknown argument: --models-preset

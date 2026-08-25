@@ -1,5 +1,5 @@
 import conftest_paths  # noqa: F401
-import json, os, tempfile, unittest, urllib.error
+import json, os, tempfile, unittest, urllib.error, urllib.parse
 import stats
 
 
@@ -74,6 +74,72 @@ class TestRouterMetricsScrape(RouterCase):
         self.tr._get = fake_get
         self.tr.poll_once()
         self.assertFalse(self.tr.live["router_up"])
+
+
+class TestMultiModelScrape(RouterCase):
+    """With --models-max > 1 several models can be resident at once; each
+    model's tokens must be diffed against its own baseline and attributed to
+    the right model."""
+
+    def _wire_multi(self, models, seen=None):
+        """models: dict id -> (prompt, gen). /models reports all as loaded;
+        /metrics?model=<id> returns that model's counters."""
+        def fake_get(path, timeout=4):
+            if seen is not None:
+                seen.append(path)
+            if path == "/models":
+                data = [{"id": "default", "status": {"value": "unloaded"}}]
+                for mid in models:
+                    data.append({"id": mid, "status": {"value": "loaded"}})
+                return json.dumps({"data": data})
+            if path.startswith("/metrics?model="):
+                mid = urllib.parse.unquote(path.split("=", 1)[1])
+                p, g = models[mid]
+                return (f"llamacpp:prompt_tokens_total {p}\n"
+                        f"llamacpp:tokens_predicted_total {g}\n"
+                        f"llamacpp:predicted_tokens_seconds 12.5\n")
+            if path == "/metrics":
+                raise urllib.error.HTTPError(path, 400, "model name missing", {}, None)
+            raise AssertionError("unexpected path " + path)
+        self.tr._get = fake_get
+
+    def test_all_loaded_models_reported(self):
+        self._wire_multi({"a": (0, 0), "b": (0, 0)})
+        self.tr.poll_once()
+        self.assertTrue(self.tr.live["router_up"])
+        self.assertEqual(sorted(self.tr.live["loaded_models"]), ["a", "b"])
+        self.assertEqual(self.tr.live["loaded_model"], "a")  # first, for back-compat
+
+    def test_deltas_attributed_per_model(self):
+        self._wire_multi({"a": (10, 20), "b": (100, 200)})
+        self.tr.poll_once()                       # baseline both
+        self._wire_multi({"a": (15, 60), "b": (100, 200)})  # only 'a' advanced
+        self.tr.poll_once()
+        a = self.tr.data["models"]["a"]
+        b = self.tr.data["models"]["b"]
+        self.assertEqual(a["prompt"], 5)
+        self.assertEqual(a["generated"], 40)
+        self.assertEqual(b["prompt"], 0)          # 'b' was idle -> no delta
+        self.assertEqual(b["generated"], 0)
+
+    def test_unloaded_model_baseline_dropped(self):
+        self._wire_multi({"a": (10, 20), "b": (0, 0)})
+        self.tr.poll_once()                       # baseline both
+        self._wire_multi({"a": (10, 20)})         # 'b' evicted
+        self.tr.poll_once()
+        self.assertNotIn("b", self.tr._prev)
+        # 'b' reloads later: fresh baseline, no stale diff attributed
+        self._wire_multi({"a": (10, 20), "b": (500, 500)})
+        self.tr.poll_once()
+        self.assertEqual(self.tr.data["models"]["b"]["prompt"], 0)
+
+    def test_counter_reset_guard_still_holds(self):
+        self._wire_multi({"a": (10, 20)})
+        self.tr.poll_once()
+        self._wire_multi({"a": (2, 3)})           # router restarted -> counters reset
+        self.tr.poll_once()
+        self.assertEqual(self.tr.data["models"]["a"]["prompt"], 0)
+        self.assertEqual(self.tr.data["models"]["a"]["generated"], 0)
 
 
 if __name__ == "__main__":

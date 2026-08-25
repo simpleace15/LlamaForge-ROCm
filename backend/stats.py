@@ -3,8 +3,8 @@
 The dashboard never sees inference traffic (clients hit the llama.cpp router
 directly), and llama.cpp's own Prometheus counters reset on restart and keep no
 per-model history. So this module runs a background poller that scrapes the
-router's `/metrics`, diffs the token counters, attributes the delta to the
-currently-loaded model (safe: the router runs with --models-max 1), and
+router's `/metrics` for every loaded model, diffs each model's token counters
+against its own previous baseline, attributes the delta to that model, and
 persists per-model + daily totals to stats.json. Pure stdlib.
 """
 import json, os, re, threading, time, urllib.request, urllib.parse
@@ -66,16 +66,15 @@ class StatsTracker:
     def __init__(self):
         self.lock = threading.Lock()
         self.data = self._load()
-        self._prev = None          # (prompt_total, gen_total) from last poll
-        self._prev_model = None
-        self._vprev = None         # (prompt, gen) from last vLLM poll
+        self._prev = {}             # model_id -> (prompt_total, gen_total) baseline
+        self._idle = {}             # model_id -> was generation idle last poll
+        self._vprev = None          # (prompt, gen) from last vLLM poll
         self._vprev_model = None
-        self._idle = True          # was generation idle last poll (for run count)
         self._dirty = False
         self._last_flush = 0.0
         self.live = {"prompt_per_sec": 0.0, "gen_per_sec": 0.0,
                      "requests_processing": 0, "loaded_model": None,
-                     "router_up": False}
+                     "loaded_models": [], "router_up": False}
 
     # ---------- persistence ----------
     def _load(self):
@@ -109,19 +108,22 @@ class StatsTracker:
             return r.read().decode(errors="replace")
 
     def _router_state(self):
-        """(router_up, loaded_model_id). One /models call decides both: the
-        router is 'up' whenever /models answers, whether or not a model is
+        """(router_up, loaded_model_ids). One /models call decides both: the
+        router is 'up' whenever /models answers, whether or not any model is
         loaded. (Its /metrics is per-model and 400s without a model name, so
-        /metrics can't be used to judge liveness.)"""
+        /metrics can't be used to judge liveness.) Returns the list of every
+        model reported 'loaded' — empty when the router is up but idle, and also
+        empty when the router is down (paired with router_up=False)."""
         try:
             data = json.loads(self._get("/models"))
         except Exception:
-            return (False, None)
+            return (False, [])
+        loaded = []
         for m in data.get("data", []):
             mid = m.get("id")
             if mid and mid != "default" and m.get("status", {}).get("value") == "loaded":
-                return (True, mid)
-        return (True, None)
+                loaded.append(mid)
+        return (True, loaded)
 
     # ---------- accumulation (call under self.lock) ----------
     def _model(self, mid):
@@ -175,57 +177,80 @@ class StatsTracker:
         self._vprev_model = model
 
     def poll_once(self):
-        # One /models call tells us both whether the router is up and which
-        # model is loaded. The router's /metrics is per-model and 400s without
-        # a model name, so we must know the model before scraping it - scraping
-        # bare /metrics (the old bug) made every poll look like the router down.
-        up, model = self._router_state()
+        # One /models call tells us whether the router is up AND every model it
+        # has resident. The router's /metrics is per-model and 400s without a
+        # model name, so we scrape /metrics?model=<id> for EACH loaded model and
+        # diff each against its own baseline (the old single-model assumption
+        # broke once --models-max > 1 let several models be resident at once).
+        up, models = self._router_state()
         if not up:
             with self.lock:
                 self.live.update(router_up=False, prompt_per_sec=0.0,
                                  gen_per_sec=0.0, requests_processing=0,
-                                 loaded_model=None)
-                self._prev = None          # re-baseline on next good poll
+                                 loaded_model=None, loaded_models=[])
+                self._prev = {}            # re-baseline on next good poll
+                self._idle = {}
                 self._poll_vllm()          # vLLM runs independently of this router
                 self._flush()
             return
 
-        metrics = {}
-        if model:
+        # Scrape each resident model's metrics FIRST (network I/O, up to 4s each
+        # with a slow/broken model), OUTSIDE the lock so a slow scrape can't
+        # block summary()/the stats API. Then take the lock only for the
+        # in-memory diff + state update.
+        scraped = {}
+        for model in models:
             try:
-                metrics = _parse_metrics(
+                scraped[model] = _parse_metrics(
                     self._get("/metrics?model=" + urllib.parse.quote(model)))
             except Exception:
-                metrics = {}
-        p = metrics.get(M_PROMPT_TOTAL, 0.0)
-        g = metrics.get(M_GEN_TOTAL, 0.0)
+                scraped[model] = {}
+
+        # Aggregate live throughput across all resident models, and diff each
+        # model's token counters against its own previous poll.
+        tot_pps = tot_gps = 0.0
+        tot_req = 0
         with self.lock:
-            self.live.update(
-                router_up=True,
-                prompt_per_sec=metrics.get(M_PROMPT_PER_SEC, 0.0),
-                gen_per_sec=metrics.get(M_GEN_PER_SEC, 0.0),
-                requests_processing=int(metrics.get(M_REQ_PROCESSING, 0.0)),
-                loaded_model=model,
-            )
-            if model:
+            for model in models:
+                metrics = scraped.get(model, {})
+                p = metrics.get(M_PROMPT_TOTAL, 0.0)
+                g = metrics.get(M_GEN_TOTAL, 0.0)
+                tot_pps += metrics.get(M_PROMPT_PER_SEC, 0.0)
+                tot_gps += metrics.get(M_GEN_PER_SEC, 0.0)
+                tot_req += int(metrics.get(M_REQ_PROCESSING, 0.0))
                 self._model(model)["loaded_secs"] += POLL_SECS
                 self._dirty = True
-            # attribute token deltas only when the same model stayed loaded
-            if self._prev is not None and model and model == self._prev_model:
-                dp = p - self._prev[0]
-                dg = g - self._prev[1]
-                if dp < 0 or dg < 0:       # counter reset (router restart)
-                    dp = dg = 0
-                if dp or dg:
-                    self._record_tokens(model, dp, dg)
-                if dg > 0 and self._idle:   # a fresh generation burst ~= one run
-                    self._model(model)["runs"] += 1
-                    self._dirty = True
-                self._idle = (dg == 0)
-            else:
-                self._idle = True
-            self._prev = (p, g)
-            self._prev_model = model
+                prev = self._prev.get(model)
+                if prev is not None:
+                    dp = p - prev[0]
+                    dg = g - prev[1]
+                    if dp < 0 or dg < 0:   # counter reset (router restart)
+                        dp = dg = 0
+                    if dp or dg:
+                        self._record_tokens(model, dp, dg)
+                    was_idle = self._idle.get(model, True)
+                    if dg > 0 and was_idle:   # fresh generation burst ~= one run
+                        self._model(model)["runs"] += 1
+                        self._dirty = True
+                    self._idle[model] = (dg == 0)
+                else:
+                    self._idle[model] = True
+                self._prev[model] = (p, g)
+            # Drop baselines for models that are no longer resident, so a later
+            # reload starts from a fresh baseline instead of a stale diff.
+            for gone in list(self._prev):
+                if gone not in models:
+                    self._prev.pop(gone, None)
+                    self._idle.pop(gone, None)
+
+            self.live.update(
+                router_up=True,
+                prompt_per_sec=tot_pps,
+                gen_per_sec=tot_gps,
+                requests_processing=tot_req,
+                loaded_model=(models[0] if models else None),
+                loaded_models=list(models),
+            )
             self._poll_vllm()
             self._flush()
 
@@ -245,7 +270,9 @@ class StatsTracker:
         """Zero the whole store (user-initiated from the Stats tab)."""
         with self.lock:
             self.data = _empty()
-            self._prev = self._vprev = None
+            self._prev = {}
+            self._idle = {}
+            self._vprev = None
             self._dirty = True
             self._flush(force=True)
 

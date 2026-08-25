@@ -12,8 +12,8 @@ Per-model token counts, run counts, and generation speed, a daily activity chart
 
 The dashboard itself never sees inference traffic — clients talk to the llama.cpp router directly — and llama.cpp's own Prometheus counters reset on every router restart and keep no per-model history. `backend/stats.py`'s `StatsTracker` works around both limits with a background poller (`run_forever()`, every `POLL_SECS = 5` seconds) that:
 
-1. Calls the router's `/models` endpoint to learn whether it's up and which model is currently loaded (`--models-max 1`, so at most one model is ever loaded at a time — this is what makes attributing token deltas to "the loaded model" safe).
-2. Scrapes `/metrics?model=<id>` for that model's cumulative `llamacpp:prompt_tokens_total` and `llamacpp:tokens_predicted_total` counters, diffs them against the previous poll, and adds the delta to that model's running totals — only when the *same* model stayed loaded across both polls, and only when the delta is non-negative (a drop means the router restarted and the counters reset, so it's treated as zero rather than subtracted).
+1. Calls the router's `/models` endpoint to learn whether it's up and which models are currently loaded. With `models_max` > 1 several models can be resident at once, so the poller keeps a **per-model baseline** and diffs each model's counters against its own previous poll — this is what keeps token attribution correct when more than one model is loaded.
+2. Scrapes `/metrics?model=<id>` for *each* loaded model's cumulative `llamacpp:prompt_tokens_total` and `llamacpp:tokens_predicted_total` counters, diffs them against that model's own previous poll, and adds the delta to that model's running totals — only when the delta is non-negative (a drop means the router restarted and the counters reset, so it's treated as zero rather than subtracted).
 3. Separately polls vLLM's `/metrics` (`vllm:prompt_tokens_total` / `vllm:generation_tokens_total`) on `vllm_port` the same way, best-effort and silent on failure, so vLLM usage lands in the same per-model store.
 4. Persists everything to `stats.json` at the repo root via an atomic write (write to `.tmp`, then `os.replace`), throttled to at most once every `FLUSH_SECS = 15` seconds while dirty.
 
@@ -24,7 +24,7 @@ Each model's record in `stats.json` (`{"models": {...}, "daily": {...}, "first_s
 ## How to use it
 
 1. Open the **Stats** tab. The top row shows total tokens processed, tokens generated, cumulative inference time, distinct models used, approximate run count, and the most-used model.
-2. **Live Throughput** shows the currently loaded model, generation and prompt-eval tok/s, and active request count in real time (polled every 4 seconds while the tab is open).
+2. **Live Throughput** shows the currently loaded model(s), generation and prompt-eval tok/s, and active request count in real time (polled every 4 seconds while the tab is open).
 3. **Activity** is a stacked prompt/generated bar chart; toggle **14d** / **30d** to change the window.
 4. **Per-model Usage** lists every model with logged usage — total tokens, average tok/s while generating, run count, time loaded, and when it was last used. Click a column chip to sort by it.
 5. Click **Reset stats** to zero the whole store (`POST /api/stats/reset`) — this is destructive and cannot be undone.
@@ -39,7 +39,7 @@ Each model's record in `stats.json` (`{"models": {...}, "daily": {...}, "first_s
 | Concept | Source | Behavior |
 |---|---|---|
 | Poll cadence | `stats.py: POLL_SECS` | Router scraped every 5 seconds; `stats.json` flushed at most every 15 seconds (`FLUSH_SECS`) while dirty. |
-| Token attribution | `StatsTracker.poll_once()` | Deltas from `/metrics?model=<id>` credited to a model only if it was also loaded on the prior poll; negative deltas (counter reset) are dropped, not subtracted. |
+| Token attribution | `StatsTracker.poll_once()` | Deltas from `/metrics?model=<id>` diffed per-model against that model's own prior poll; negative deltas (counter reset) are dropped, not subtracted. |
 | vLLM usage | `StatsTracker._poll_vllm()` | Separately scrapes vLLM's `/metrics` on `vllm_port`; same delta/attribution logic, silent on failure. |
 | Run counting | `StatsTracker.poll_once()` | A "run" increments on each idle-to-active generation transition — an approximation, not a true request count. |
 | Avg tok/s | `StatsTracker.summary()` | `generated / gen_secs`; `gen_secs` accumulates only during poll windows with active generation. |
@@ -51,6 +51,6 @@ Each model's record in `stats.json` (`{"models": {...}, "daily": {...}, "first_s
 
 ## Troubleshooting
 
-If "Live Throughput" shows the router offline but models load fine, confirm the router process is actually running on `router_port` — `has_api_key`/`router_running` come from `GET /api/network`, and the poller re-baselines (`self._prev = None`) whenever `/models` fails to answer. If per-model totals look stuck at zero for a model you know ran, check that it wasn't reloaded mid-generation: a token delta is only counted when the same model ID was loaded on the previous poll, so a reload during a burst discards that window. If external clients get `401`/`403` after enabling LAN access, verify they're sending `Authorization: Bearer <key>` with the exact key generated in the Network Access panel — a blank key field on save keeps the previously stored key rather than clearing it.
+If "Live Throughput" shows the router offline but models load fine, confirm the router process is actually running on `router_port` — `has_api_key`/`router_running` come from `GET /api/network`, and the poller re-baselines (clears its per-model `self._prev` dict) whenever `/models` fails to answer. If per-model totals look stuck at zero for a model you know ran, check that it wasn't reloaded mid-generation: a token delta is only counted when the same model ID was loaded on the previous poll, so a reload during a burst discards that window. If external clients get `401`/`403` after enabling LAN access, verify they're sending `Authorization: Bearer <key>` with the exact key generated in the Network Access panel — a blank key field on save keeps the previously stored key rather than clearing it.
 
 See also [Setup](setup.md) for the Network Access panel this page's LAN/API-key section documents, and [Models & Tuning](models.md) for per-model configuration.

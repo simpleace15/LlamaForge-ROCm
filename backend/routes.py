@@ -1313,7 +1313,8 @@ def post_network(req):
     sbin = _active_server_bin(c)
     ini = config.ini_path()
     ok, err = router_ctl.restart(sbin, ini, c["router_port"],
-                                 host, api_key, LOGDIR)
+                                 host, api_key, LOGDIR,
+                                 c.get("models_max", 5))
     return (200 if ok else 500), {"ok": ok, "error": err, "host": host}
 
 
@@ -1343,7 +1344,8 @@ def post_engine_switch(req):
     c = config.update({"active_engine": engine})
     ok, err = router_ctl.restart(sbin, config.ini_path(), c["router_port"],
                                  c.get("router_host", "127.0.0.1"),
-                                 c.get("router_api_key", ""), LOGDIR)
+                                 c.get("router_api_key", ""), LOGDIR,
+                                 c.get("models_max", 5))
     return 200, {"ok": ok, "active_engine": engine, "error": err}
 
 

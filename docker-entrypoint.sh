@@ -78,9 +78,22 @@ json.dump(cfg, open(p, "w"), indent=2)
 PY
 fi
 
+# Resolve the max concurrent resident models from config.json (default 5).
+# config.json is written above only on first run and never overwritten, so a
+# user's hand-edited models_max must be read back here rather than re-derived.
+MODELS_MAX="$(python3 - "$CFG" <<'PY'
+import json, sys
+try:
+    cfg = json.load(open(sys.argv[1]))
+except Exception:
+    cfg = {}
+print(int(cfg.get("models_max", 5)))
+PY
+)"
+
 # Start the llama.cpp router (if not already up).
 if ! lsof -ti tcp:8080 -sTCP:LISTEN >/dev/null 2>&1; then
-  args=(--models-preset "$INI" --models-max 1 --offline
+  args=(--models-preset "$INI" --models-max "$MODELS_MAX" --offline
         --host 0.0.0.0 --port 8080 --metrics)
   [ -n "$ROUTER_API_KEY" ] && args+=(--api-key "$ROUTER_API_KEY")
   /usr/local/bin/llama-server "${args[@]}" \

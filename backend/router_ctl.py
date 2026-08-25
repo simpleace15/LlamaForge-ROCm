@@ -22,7 +22,8 @@ def lan_ip():
         s.close()
 
 # ---------------------------------------------------------------- capability
-# The router is driven as `<server_bin> --models-preset <ini> --models-max 1`.
+# The router is driven as `<server_bin> --models-preset <ini> --models-max N`
+# (N configurable, default 5 — several models resident at once, LRU eviction).
 # Not every llama-family binary can do that: ik_llama.cpp forked before router
 # mode existed and answers `unknown argument: --models-preset`, which would take
 # the router down and leave the dashboard with nothing to talk to. Ask first.
@@ -95,7 +96,7 @@ def stop(port, timeout=10):
     time.sleep(0.5)
     return _pid_on_port(port) is None
 
-def start(server_bin, models_ini, port, host, api_key, logdir):
+def start(server_bin, models_ini, port, host, api_key, logdir, models_max=5):
     if not server_bin or not os.path.exists(server_bin):
         return False, "server_bin not found - build llama.cpp first"
     # Port 8080 is a popular default (XAMPP, Apache, other dev servers). Without
@@ -107,7 +108,7 @@ def start(server_bin, models_ini, port, host, api_key, logdir):
         return False, (f"port {port} is already in use by another process - "
                        f"stop it, or change the router port in Setup")
     os.makedirs(logdir, exist_ok=True)
-    args = [server_bin, "--models-preset", models_ini, "--models-max", "1", "--offline",
+    args = [server_bin, "--models-preset", models_ini, "--models-max", str(models_max), "--offline",
             "--host", host, "--port", str(port), "--metrics"]
     if api_key:
         args += ["--api-key", api_key]
@@ -126,6 +127,6 @@ def start(server_bin, models_ini, port, host, api_key, logdir):
         err.close()
     return True, ""
 
-def restart(server_bin, models_ini, port, host, api_key, logdir):
+def restart(server_bin, models_ini, port, host, api_key, logdir, models_max=5):
     stop(port)
-    return start(server_bin, models_ini, port, host, api_key, logdir)
+    return start(server_bin, models_ini, port, host, api_key, logdir, models_max)

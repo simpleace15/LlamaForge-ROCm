@@ -67,7 +67,8 @@ if (-not (Listening $cfg.router_port)) {
   }
   if (Test-Path $serverBin) {
     $routerHost = if ($cfg.router_host) { $cfg.router_host } else { "127.0.0.1" }
-    $args = @("--models-preset", $modelsIni, "--models-max", "1", "--offline",
+    $modelsMax = if ($cfg.models_max) { $cfg.models_max } else { 5 }
+    $args = @("--models-preset", $modelsIni, "--models-max", "$modelsMax", "--offline",
               "--host", $routerHost, "--port", "$($cfg.router_port)", "--metrics")
     if ($cfg.router_api_key) { $args += @("--api-key", $cfg.router_api_key) }
     Start-Process -FilePath $serverBin -ArgumentList $args -WindowStyle Hidden `
