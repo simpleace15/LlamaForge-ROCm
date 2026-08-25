@@ -178,8 +178,8 @@ async function hubFiles(row) {
 
 async function hubDownload(repo, path, shards, mmproj) {
   const r = await api("/api/hub/download", {repo, path, shards, mmproj});
-  if (!r.started) { toast("A download is already running", "err"); return; }
-  toast("Download started", "ok");
+  if (!r.started) { toast("Could not start download", "err"); return; }
+  toast("Queued for download", "ok");
   $("#hub-dlcard").style.display = ""; $("#dl-done").style.display = "none";
   $("#dl-run").style.display = ""; dlPrev = null;
   ggufDlPoll();
@@ -191,7 +191,8 @@ function ggufDlPoll() {
   clearInterval(dlPoll);
   dlPoll = setInterval(async () => {
     const s = await api("/api/hub/progress");
-    $("#dl-file").textContent = `${s.repo} :: ${s.file||"-"} (${s.done_files+1 > s.total_files ? s.total_files : s.done_files+1}/${s.total_files})`;
+    const q = (s.queued || 0) > 0 ? ` · ${s.queued} queued` : "";
+    $("#dl-file").textContent = `${s.repo} :: ${s.file||"-"} (${s.done_files+1 > s.total_files ? s.total_files : s.done_files+1}/${s.total_files})${q}`;
     const pct = s.total ? Math.round(100*s.downloaded/s.total) : 0;
     setHTML($("#dl-meter"), meter(s.downloaded, Math.max(s.total,1)));
     $("#dl-prog").textContent = s.phase==="done" ? "complete"
@@ -206,6 +207,10 @@ function ggufDlPoll() {
     if (s.phase === "paused") clearInterval(dlPoll);
     if (s.phase === "cancelled") { clearInterval(dlPoll); toast("Download cancelled", "ok"); }
     if (s.phase === "done") {
+      // A transient "done" between queued jobs -> keep polling; the next job
+      // flips state back to starting/downloading. Truly finished (queued 0 and
+      // idle) -> stop and show the (now auto-registered) result.
+      if (s.queued > 0 || s.running) return;
       clearInterval(dlPoll); $("#dl-done").style.display = "";
       $("#dl-add").onclick = async () => {
         const m = $("#dl-msg"); m.className = "msg work"; m.textContent = "registering...";

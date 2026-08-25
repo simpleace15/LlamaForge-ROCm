@@ -665,6 +665,23 @@ def _register_ggufs_beside(paths):
     return entries
 
 
+def _auto_register_finished(finished_path):
+    """On-download-complete hook: register the finished model so queued
+    downloads land in models.ini without a manual 'Add to models' click."""
+    if not finished_path or not os.path.exists(finished_path):
+        return
+    folder = os.path.dirname(finished_path)
+    try:
+        _register_ggufs_beside(
+            [os.path.join(folder, f) for f in os.listdir(folder)
+             if f.lower().endswith(".gguf")])
+    except Exception:
+        pass  # registration is best-effort; a failed one still shows in Scan
+
+
+DOWNLOADS._on_complete = _auto_register_finished
+
+
 # =============================================================== GET handlers
 
 def get_state(req):

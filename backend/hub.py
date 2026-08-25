@@ -95,30 +95,42 @@ class Paused(Exception):
 
 
 class DownloadManager:
-    """One download job at a time, streamed with progress. Cancel and pause are
-    cooperative flags the chunk loop checks. Pause leaves the partial `.part`
-    file in place; a later start() with the same paths resumes it via an HTTP
-    Range request, so a 25GB transfer never restarts from zero."""
+    """Sequential download queue with progress. One transfer runs at a time;
+    extra start() calls append to a FIFO queue and are drained automatically.
+    Cancel and pause are cooperative flags the chunk loop checks. Pause leaves
+    the partial `.part` file in place; a later start()/resume() with the same
+    paths resumes it via an HTTP Range request, so a 25GB transfer never
+    restarts from zero."""
+
     def __init__(self):
         self.lock = threading.Lock()
-        self._job = None       # (repo, paths, dest_dir) - kept so resume() can rerun
+        self._queue = []        # FIFO of (repo, paths, dest_dir) — [0] is current
+        self._queued_keys = set()  # dedupe: (repo, tuple(paths), dest_dir)
+        self._current_key = None  # key of the running/paused job
+        self._worker = None
+        self.completed = []     # finished_path of each job that completed
+        self._on_complete = None  # callback(finished_path) fired per completed job
         self.state = self._idle_state()
 
     @staticmethod
     def _idle_state():
         return {"running": False, "repo": "", "file": "", "done_files": 0,
                 "total_files": 0, "downloaded": 0, "total": 0, "cancel": False,
-                "paused": False, "error": "", "finished_path": "", "phase": "idle"}
+                "paused": False, "error": "", "finished_path": "", "phase": "idle",
+                "queued": 0}
 
     def progress(self):
         return dict(self.state)
 
     def cancel(self):
-        """Request cancellation of the running job. Returns whether one ran."""
+        """Request cancellation of the running job and drop the pending queue.
+        Returns whether a job was running."""
         with self.lock:
             if not self.state["running"]:
                 return False
             self.state["cancel"] = True
+            self._queue.clear()
+            self._queued_keys.clear()
             return True
 
     def pause(self):
@@ -134,12 +146,67 @@ class DownloadManager:
         """Restart a paused job from where it left off. Returns whether one
         was resumed."""
         with self.lock:
-            if self.state["running"] or self.state.get("phase") != "paused" or not self._job:
+            if self.state["running"] or self.state.get("phase") != "paused" \
+                    or not self._queue:
                 return False
-            repo, paths, dest_dir = self._job
+            repo, paths, dest_dir = self._queue[0]
+            self._current_key = self._key(repo, paths, dest_dir)
             self.state.update(running=True, cancel=False, paused=False, phase="starting")
-        threading.Thread(target=self._run, args=(repo, paths, dest_dir), daemon=True).start()
+            self._spawn_worker()
         return True
+
+    @staticmethod
+    def _key(repo, paths, dest_dir):
+        return (repo, tuple(paths), dest_dir)
+
+    def _spawn_worker(self):
+        """Start the drain loop if it is not already alive."""
+        if self._worker is None or not self._worker.is_alive():
+            self._worker = threading.Thread(target=self._worker_loop, daemon=True)
+            self._worker.start()
+
+    def _worker_loop(self):
+        """Drain the FIFO queue: run each job in turn. Pausing keeps the job at
+        the head and stops the loop (resume() restarts it); done/cancelled/failed
+        pops the head and continues to the next queued job."""
+        while True:
+            with self.lock:
+                if not self._queue:
+                    self._worker = None
+                    self._current_key = None
+                    return
+                repo, paths, dest_dir = self._queue[0]
+                self.state = self._idle_state()
+                self.state.update(running=True, repo=repo,
+                                  total_files=len(paths), phase="starting",
+                                  queued=len(self._queue) - 1)
+                self._current_key = self._key(repo, paths, dest_dir)
+            try:
+                self._run(repo, paths, dest_dir)
+            except Exception:
+                pass  # _run records phase/error itself
+            with self.lock:
+                phase = self.state.get("phase")
+                if phase == "paused":
+                    self._worker = None   # resume() restarts the loop
+                    return
+                finished = self.state.get("finished_path") or ""
+                cb = None
+                # done / cancelled / failed -> pop and continue
+                self._queued_keys.discard(self._key(repo, paths, dest_dir))
+                if self._queue and self._queue[0] == (repo, paths, dest_dir):
+                    self._queue.pop(0)
+                self._current_key = None
+                self.state["running"] = False
+                self.state["queued"] = len(self._queue)
+                if phase == "done" and finished:
+                    self.completed.append(finished)
+                    cb = self._on_complete
+            if phase == "done" and finished and cb:
+                try:
+                    cb(finished)
+                except Exception:
+                    pass
 
     def _check_cancel(self):
         if self.state.get("cancel"):
@@ -213,14 +280,24 @@ class DownloadManager:
             self.state["running"] = False
 
     def start(self, repo, paths, dest_dir):
+        """Enqueue a download. Returns True (queued); if an identical job is
+        already queued or running it is deduplicated (still returns True)."""
+        key = self._key(repo, paths, dest_dir)
         with self.lock:
-            if self.state["running"]:
-                return False
-            self._job = (repo, paths, dest_dir)
-            self.state = self._idle_state()
-            self.state.update(running=True, repo=repo, total_files=len(paths),
-                              phase="starting")
-        threading.Thread(target=self._run, args=(repo, paths, dest_dir), daemon=True).start()
+            if key in self._queued_keys or key == self._current_key:
+                return True  # already queued/running — dedupe
+            was_idle = not self.state["running"]
+            self._queue.append((repo, paths, dest_dir))
+            self._queued_keys.add(key)
+            if was_idle:
+                self.state = self._idle_state()
+                self.state.update(running=True, repo=repo,
+                                  total_files=len(paths), phase="starting",
+                                  queued=0)
+                self._current_key = key
+                self._spawn_worker()
+            else:
+                self.state["queued"] = len(self._queue) - 1
         return True
 
 if __name__ == "__main__":
