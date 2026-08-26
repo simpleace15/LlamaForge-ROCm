@@ -56,6 +56,12 @@ export async function loadSetup() {
       ${gpuLines}
       <div class="flags">${Object.entries(hw.cmake_flags).map(([k,val])=>`<span class="flagpill">${esc(k)}=${esc(val)}</span>`).join("")}</div>
       ${hw.notes.map(n=>`<div class="note">&bull; ${esc(n)}</div>`).join("")}
+      ${(hw.gpus||[]).some(g=>g.gfx_arch)?`<div class="kv" style="margin-top:10px"><span class="k">AMD backend</span>
+        <span class="v"><select id="amd-backend" style="background:var(--inset);border:1px solid var(--hair);color:var(--ink);font-family:var(--mono);font-size:12px;padding:6px">
+          <option value="rocm" ${cfgOf().amd_backend!=="vulkan"?"selected":""}>ROCm (HIP)</option>
+          <option value="vulkan" ${cfgOf().amd_backend==="vulkan"?"selected":""}>Vulkan (RADV)</option>
+        </select> <button id="amd-backend-apply">Apply &amp; Restart Router</button></span></div>
+        <div class="note">Vulkan holds ~16 tok/s on RDNA2 (gfx1030) multi-GPU where ROCm collapses to ~7 tok/s; ROCm is marginally faster single-GPU. Switching restarts the router. A model can also pin its own backend via the <b>device</b> knob in the Advanced editor.</div>`:""}
     </div>
     <div class="card"><h3>Speed Estimates <span style="color:var(--dim);font-weight:normal;font-size:11px">(advanced &mdash; optional)</span></h3>
       <div class="note">The "Will it run?" panel and Discover speed badges estimate tok/s from memory bandwidth. Detected GPU presets are used by default; override here only if you've measured your machine. Blank = use the preset/default.</div>
@@ -135,6 +141,22 @@ export async function loadSetup() {
     if (!Number.isInteger(val) || val < 512) { toast("context size must be ≥ 512", "err"); return; }
     const r = await api("/api/config", {ctx_size: val});
     toast(r.ok ? `Default context: ${val}` : "save failed", r.ok ? "ok" : "err");
+  };
+  const amdBackendApply = $("#amd-backend-apply");
+  if (amdBackendApply) amdBackendApply.onclick = async () => {
+    const sel = $("#amd-backend");
+    const backend = sel ? sel.value : "rocm";
+    amdBackendApply.disabled = true;
+    amdBackendApply.textContent = "restarting...";
+    const r = await api("/api/amd/backend", {backend});
+    if (r.ok) {
+      toast(`AMD backend: ${backend}`, "ok");
+      setTimeout(loadSetup, 1500);
+    } else {
+      toast(r.error || "switch failed", "err");
+      amdBackendApply.disabled = false;
+      amdBackendApply.textContent = "Apply & Restart Router";
+    }
   };
   const bwSave = $("#bw-save");
   if (bwSave) bwSave.onclick = async () => {

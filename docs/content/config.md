@@ -26,7 +26,7 @@ order: 1
 | `vllm_port` | int | `8081` | Port vLLM serves on inside WSL (localhost-forwarded to Windows). |
 | `cmake_flags` | object | `{}` | Persisted CMake build flags, normally seeded from hardware detection. |
 | `amd_gpu_targets` | string | `""` | `AMDGPU_TARGETS` for ROCm/HIP builds. Empty = auto-detect from the installed AMD GPUs (falling back to a broad default); otherwise a `;`-joined list, e.g. `"gfx1030;gfx1100"`. |
-| `amd_backend` | string | `"rocm"` | AMD accelerator: `"rocm"` (GGML_HIP) or `"vulkan"` (GGML_VULKAN). Vulkan is the right choice on RDNA2 (gfx1030) cards with no matrix cores, where ROCm's multi-GPU split collapses to ~7 tok/s but Vulkan holds ~16 tok/s. |
+| `amd_backend` | string | `"rocm"` | AMD accelerator: `"rocm"` (GGML_HIP) or `"vulkan"` (GGML_VULKAN). On the dual-backend image this is a runtime toggle — the router is restarted with `--device HIP0,...` or `--device Vulkan0,...`. Vulkan is the right choice on RDNA2 (gfx1030) cards with no matrix cores, where ROCm's multi-GPU split collapses to ~7 tok/s but Vulkan holds ~16 tok/s. |
 | `git_remote` | string | `"https://github.com/ggml-org/llama.cpp"` | Remote used to clone/update the `llama.cpp` source. |
 | `active_engine` | string | `"llamacpp"` | Which llama-family binary the router uses: `"llamacpp"` or `"ikllama"`. |
 | `ik_llama_src` | string | `""` | Path to a git checkout of `ik_llama.cpp`. |

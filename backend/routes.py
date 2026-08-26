@@ -1300,6 +1300,19 @@ def _active_server_bin(c=None):
     return c.get("server_bin", "")
 
 
+def _router_device(c=None):
+    """The `--device` list for the router, from config's `amd_backend`.
+
+    Returns "" when there are no AMD GPUs (or the backend is unset), so the
+    router falls back to llama.cpp's own auto-select. On a dual-backend binary
+    (HIP + Vulkan) this is what makes the ROCm-vs-Vulkan choice deterministic.
+    """
+    c = c or cfg()
+    backend = c.get("amd_backend") or "rocm"
+    amd = hardware.detect_amd_gpus()
+    return hardware.device_list(backend, len(amd))
+
+
 def _record_server_bin(key, path):
     """Point `key` at the binary a finished build produced. Returns True if
     config.json changed.
@@ -1328,7 +1341,7 @@ def post_network(req):
     ini = config.ini_path()
     ok, err = router_ctl.restart(sbin, ini, c["router_port"],
                                  host, api_key, LOGDIR,
-                                 c.get("models_max", 5))
+                                 c.get("models_max", 5), device=_router_device(c))
     return (200 if ok else 500), {"ok": ok, "error": err, "host": host}
 
 
@@ -1359,8 +1372,33 @@ def post_engine_switch(req):
     ok, err = router_ctl.restart(sbin, config.ini_path(), c["router_port"],
                                  c.get("router_host", "127.0.0.1"),
                                  c.get("router_api_key", ""), LOGDIR,
-                                 c.get("models_max", 5))
+                                 c.get("models_max", 5), device=_router_device(c))
     return 200, {"ok": ok, "active_engine": engine, "error": err}
+
+
+def post_amd_backend(req):
+    """Switch the AMD accelerator (rocm / vulkan) and restart the router.
+
+    `amd_backend` steers the `--device` list the router is launched with, so a
+    change only takes effect on restart. On a dual-backend binary (HIP +
+    Vulkan) this is the on-instance ROCm-vs-Vulkan toggle; on a single-backend
+    binary the device list simply names the one backend that was compiled in.
+    """
+    backend = req.body.get("backend", "rocm")
+    if backend not in ("rocm", "vulkan"):
+        raise ApiError(400, f"unknown AMD backend: {backend}")
+    c = cfg()
+    current = c.get("amd_backend", "rocm")
+    sbin = _active_server_bin(c)
+    if not sbin or not os.path.exists(sbin):
+        return 200, {"ok": False, "amd_backend": current,
+                     "error": f"binary not found: {sbin or '(unset)'} — build llama.cpp first"}
+    c = config.update({"amd_backend": backend})
+    ok, err = router_ctl.restart(sbin, config.ini_path(), c["router_port"],
+                                 c.get("router_host", "127.0.0.1"),
+                                 c.get("router_api_key", ""), LOGDIR,
+                                 c.get("models_max", 5), device=_router_device(c))
+    return 200, {"ok": ok, "amd_backend": backend, "error": err}
 
 
 def post_vllm_load(req):
@@ -1570,6 +1608,7 @@ POST_ROUTES = {
     "/api/config":              post_config,
     "/api/network":             post_network,
     "/api/engine/switch":       post_engine_switch,
+    "/api/amd/backend":         post_amd_backend,
     "/api/vllm/load":           post_vllm_load,
     "/api/vllm/unload":         post_vllm_unload,
     "/api/vllm/setup/install":  post_vllm_setup_install,

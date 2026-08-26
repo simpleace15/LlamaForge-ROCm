@@ -92,10 +92,32 @@ print(int(cfg.get("models_max", 5)))
 PY
 )"
 
+# Resolve the AMD backend (rocm|vulkan) and the matching --device list. On the
+# dual-backend image this is the on-instance ROCm-vs-Vulkan switch; the device
+# list names every AMD GPU of that backend so offloading is deterministic.
+# Empty when no AMD GPUs are detected (llama.cpp auto-selects then).
+DEVICE="$(python3 - "$CFG" <<'PY'
+import json, os, sys
+try:
+    cfg = json.load(open(sys.argv[1]))
+except Exception:
+    cfg = {}
+backend = cfg.get("amd_backend", "rocm")
+prefix = "Vulkan" if backend == "vulkan" else "HIP"
+# Count AMD GPUs via the DRM render nodes (Vulkan needs no /dev/kfd).
+try:
+    n = len([x for x in os.listdir("/dev/dri") if x.startswith("renderD")])
+except Exception:
+    n = 0
+print(",".join(f"{prefix}{i}" for i in range(n)) if n else "")
+PY
+)"
+
 # Start the llama.cpp router (if not already up).
 if ! lsof -ti tcp:8080 -sTCP:LISTEN >/dev/null 2>&1; then
   args=(--models-preset "$INI" --models-max "$MODELS_MAX" --offline
         --host 0.0.0.0 --port 8080 --metrics)
+  [ -n "$DEVICE" ] && args+=(--device "$DEVICE")
   [ -n "$ROUTER_API_KEY" ] && args+=(--api-key "$ROUTER_API_KEY")
   /usr/local/bin/llama-server "${args[@]}" \
     >>"$LOG_DIR/router.out.log" 2>>"$LOG_DIR/router.err.log" &

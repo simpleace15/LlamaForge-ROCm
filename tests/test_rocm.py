@@ -146,6 +146,21 @@ class TestVulkanDetection(unittest.TestCase):
             hardware._run = orig
 
 
+class TestDeviceList(unittest.TestCase):
+    def test_rocm_three_gpus(self):
+        self.assertEqual(hardware.device_list("rocm", 3), "HIP0,HIP1,HIP2")
+
+    def test_vulkan_three_gpus(self):
+        self.assertEqual(hardware.device_list("vulkan", 3), "Vulkan0,Vulkan1,Vulkan2")
+
+    def test_zero_gpus_empty(self):
+        self.assertEqual(hardware.device_list("rocm", 0), "")
+        self.assertEqual(hardware.device_list("vulkan", 0), "")
+
+    def test_unknown_backend_defaults_to_hip(self):
+        self.assertEqual(hardware.device_list("cuda", 2), "HIP0,HIP1")
+
+
 class TestAmdVramBandwidth(unittest.TestCase):
     def test_mi300x(self):
         self.assertEqual(vp._preset_vram_bw("AMD Instinct MI300X"), 5300)

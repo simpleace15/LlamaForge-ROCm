@@ -147,14 +147,21 @@ across PCIe every token (no NVLink on these cards), collapsing a 3-GPU split to
 ~7 tok/s, while Vulkan's multi-GPU path holds ~16 tok/s regardless of split or
 context length.
 
-- **Select it** by setting `"amd_backend": "vulkan"` in `config.json` (default
-  is `"rocm"`). The Setup and Build tabs then recommend a `GGML_VULKAN=ON` build
-  instead of `GGML_HIP=ON`.
-- **No `AMDGPU_TARGETS`** — that's HIP-specific. Vulkan builds need only
-  `GGML_VULKAN=ON`.
-- **No `/dev/kfd`** — Vulkan uses only the DRM render nodes (`/dev/dri/renderD*`),
-  which are already passed through. RADV (the Mesa Vulkan driver) runs on the
-  host; the container just needs the Vulkan loader.
+**One instance, both backends.** The Docker image builds llama.cpp with *both*
+`GGML_HIP=ON` and `GGML_VULKAN=ON` into a single `llama-server` binary, so you
+switch between ROCm and Vulkan at runtime — no rebuild, no second container.
+
+- **Switch it** by setting `"amd_backend": "vulkan"` in `config.json` (default
+  `"rocm"`), or from the Setup tab's **AMD backend** dropdown. The router is
+  restarted with `--device Vulkan0,Vulkan1,Vulkan2` (or `HIP0,HIP1,HIP2`).
+- **Per-model override.** `--device` is also exposed as a per-model knob in the
+  Advanced editor, so a model can pin its own backend (e.g. model A on ROCm,
+  model B on Vulkan) instead of following the global default.
+- **No `AMDGPU_TARGETS`** for Vulkan — that's HIP-specific. Vulkan builds need
+  only `GGML_VULKAN=ON`.
+- **No `/dev/kfd`** for Vulkan — it uses only the DRM render nodes
+  (`/dev/dri/renderD*`), which are already passed through. RADV (the Mesa
+  Vulkan driver) runs on the host; the container just needs the Vulkan loader.
 - **Device detection** prefers `vulkaninfo --json` (device name + VRAM) and
   falls back to the DRM card vendor/device IDs, so the dashboard still shows
   your GPUs and their VRAM-fit ratings.

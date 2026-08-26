@@ -96,7 +96,7 @@ def stop(port, timeout=10):
     time.sleep(0.5)
     return _pid_on_port(port) is None
 
-def start(server_bin, models_ini, port, host, api_key, logdir, models_max=5):
+def start(server_bin, models_ini, port, host, api_key, logdir, models_max=5, device=""):
     if not server_bin or not os.path.exists(server_bin):
         return False, "server_bin not found - build llama.cpp first"
     # Port 8080 is a popular default (XAMPP, Apache, other dev servers). Without
@@ -110,6 +110,10 @@ def start(server_bin, models_ini, port, host, api_key, logdir, models_max=5):
     os.makedirs(logdir, exist_ok=True)
     args = [server_bin, "--models-preset", models_ini, "--models-max", str(models_max), "--offline",
             "--host", host, "--port", str(port), "--metrics"]
+    if device:
+        # A dual-backend binary (HIP + Vulkan) needs an explicit device list so
+        # offloading is deterministic; auto-select may pick the wrong backend.
+        args += ["--device", device]
     if api_key:
         args += ["--api-key", api_key]
     out = open(os.path.join(logdir, "router.out.log"), "a", encoding="utf-8", errors="replace")
@@ -127,6 +131,6 @@ def start(server_bin, models_ini, port, host, api_key, logdir, models_max=5):
         err.close()
     return True, ""
 
-def restart(server_bin, models_ini, port, host, api_key, logdir, models_max=5):
+def restart(server_bin, models_ini, port, host, api_key, logdir, models_max=5, device=""):
     stop(port)
-    return start(server_bin, models_ini, port, host, api_key, logdir, models_max)
+    return start(server_bin, models_ini, port, host, api_key, logdir, models_max, device=device)

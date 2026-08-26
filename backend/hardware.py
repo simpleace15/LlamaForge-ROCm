@@ -245,6 +245,21 @@ def detect_vulkan_gpus():
     return [{"index": i, "name": name, "vram_mib": None, "gfx_arch": ""}
             for i, (dev, name) in enumerate(_drm_amd_cards())]
 
+
+def device_list(backend, count):
+    """Comma-separated `--device` list for a backend: 'HIP0,HIP1' or
+    'Vulkan0,Vulkan1'. Empty string when count <= 0 (caller should leave the
+    device unset and let llama.cpp auto-select).
+
+    A dual-backend binary (GGML_HIP + GGML_VULKAN) needs an explicit list to
+    offload deterministically — otherwise auto-select may pick the wrong
+    backend. Device names match `llama-server --list-devices` output.
+    """
+    if count <= 0:
+        return ""
+    prefix = "Vulkan" if backend == "vulkan" else "HIP"
+    return ",".join(f"{prefix}{i}" for i in range(count))
+
 def detect_all_gpus():
     """NVIDIA + AMD GPUs combined, for VRAM-fit ratings and auto-tune. Each row
     carries `vram_mib` and `name`; NVIDIA rows add `compute_cap`, AMD rows add

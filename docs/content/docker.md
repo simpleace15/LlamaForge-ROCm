@@ -72,21 +72,29 @@ multi-GPU path does not suffer this penalty — it holds ~16 tok/s regardless of
 split or context length.
 
 Select Vulkan by setting `"amd_backend": "vulkan"` in `config.json` (default
-`"rocm"`). The Setup and Build tabs then recommend `GGML_VULKAN=ON` instead of
-`GGML_HIP=ON`. Vulkan needs no `AMDGPU_TARGETS` and no `/dev/kfd` — only the
-DRM render nodes, which are already passed through. Device detection prefers
-`vulkaninfo --json` and falls back to the DRM card vendor/device IDs.
+`"rocm"`), or from the Setup tab's **AMD backend** dropdown. The router is
+restarted with `--device Vulkan0,Vulkan1,Vulkan2` (or `HIP0,HIP1,HIP2`).
+Vulkan needs no `AMDGPU_TARGETS` and no `/dev/kfd` — only the DRM render nodes,
+which are already passed through. Device detection prefers `vulkaninfo --json`
+and falls back to the DRM card vendor/device IDs.
 
-### Build the Vulkan image
+### Build the image
 
 ```bash
+# Dual-backend (default): HIP + Vulkan in one binary, switch at runtime
+docker build -t llamaforge-rocm .
+
+# Narrow to a single backend for a smaller/faster build
+docker build --build-arg AMD_BACKEND=rocm -t llamaforge-rocm .
 docker build --build-arg AMD_BACKEND=vulkan -t llamaforge-vulkan .
 ```
 
-The Vulkan image builds on plain Ubuntu 24.04 (no ROCm toolchain) with the
-Vulkan headers + loader, and the runtime stage carries `libvulkan1` so
-`llama-server` can talk to the host's RADV ICD. The default `AMD_BACKEND=rocm`
-build is unchanged.
+The default image builds on the ROCm toolchain image (24.04 + ROCm 7.2.1) with
+the Vulkan headers + loader added on top, so a single `llama-server` carries
+both backends. The runtime stage keeps `rocm-smi` (perf-level pinning +
+telemetry) and adds `libvulkan1` so the Vulkan backend can reach the host's
+RADV ICD. `--device` selects the backend at runtime, so one instance serves
+both ROCm and Vulkan without a rebuild or a second container.
 
 ## Docker deployment
 
