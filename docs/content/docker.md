@@ -63,6 +63,31 @@ bandwidth presets for Instinct (MI50–MI300X), Radeon Pro (W6600–W7900, V620)
 and RX 5000/6000/7000 parts, keyed off the KFD node name. Unknown AMD parts
 fall back to the default bandwidth like any unknown GPU.
 
+## Vulkan support (AMD RDNA2)
+
+On **RDNA2** cards (gfx1030 — Radeon Pro V620, RX 6000) with no hardware matrix
+cores, ROCm's multi-GPU layer-split forces activations across PCIe every token
+(no NVLink on these cards), collapsing a 3-GPU split to ~7 tok/s. Vulkan's
+multi-GPU path does not suffer this penalty — it holds ~16 tok/s regardless of
+split or context length.
+
+Select Vulkan by setting `"amd_backend": "vulkan"` in `config.json` (default
+`"rocm"`). The Setup and Build tabs then recommend `GGML_VULKAN=ON` instead of
+`GGML_HIP=ON`. Vulkan needs no `AMDGPU_TARGETS` and no `/dev/kfd` — only the
+DRM render nodes, which are already passed through. Device detection prefers
+`vulkaninfo --json` and falls back to the DRM card vendor/device IDs.
+
+### Build the Vulkan image
+
+```bash
+docker build --build-arg AMD_BACKEND=vulkan -t llamaforge-vulkan .
+```
+
+The Vulkan image builds on plain Ubuntu 24.04 (no ROCm toolchain) with the
+Vulkan headers + loader, and the runtime stage carries `libvulkan1` so
+`llama-server` can talk to the host's RADV ICD. The default `AMD_BACKEND=rocm`
+build is unchanged.
+
 ## Docker deployment
 
 ### Build

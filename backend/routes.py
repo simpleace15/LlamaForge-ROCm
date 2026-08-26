@@ -723,9 +723,11 @@ def get_setup(req):
 
 
 def _recommend_with_cfg():
-    """hardware.recommend() with the user's configured AMDGPU_TARGETS override."""
+    """hardware.recommend() with the user's configured AMDGPU_TARGETS override
+    and AMD backend (rocm vs vulkan)."""
     c = cfg()
-    return hardware.recommend(amd_targets=c.get("amd_gpu_targets") or None)
+    return hardware.recommend(amd_targets=c.get("amd_gpu_targets") or None,
+                              amd_backend=c.get("amd_backend") or "rocm")
 
 
 def get_build_info(req):
@@ -1221,6 +1223,7 @@ def _v_port(v):  return v if isinstance(v, int) and 1 <= v <= 65535 else None
 def _v_mode(v):  return v if v in ("lite", "advanced") else None
 def _v_theme(v): return v if v in ("", "light", "dark") else None
 def _v_ctx(v):   return v if isinstance(v, int) and 512 <= v <= 1048576 else None
+def _v_amd_backend(v): return v if v in ("rocm", "vulkan") else None
 def _v_dirs(v):
     return v if isinstance(v, list) and all(isinstance(x, str) for x in v) else None
 
@@ -1246,6 +1249,7 @@ CONFIG_WRITABLE = {
     "onboarded":               _v_bool,
     "auto_load_model":         _v_str,
     "ctx_size":                _v_ctx,
+    "amd_backend":             _v_amd_backend,
     "wsl_distro":              _v_str,
     "vllm_port":               _v_port,
     "model_dirs":              _v_dirs,

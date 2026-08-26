@@ -71,6 +71,81 @@ class TestRecommendRocm(unittest.TestCase):
         self.assertEqual(r["runtime"]["n-gpu-layers"], "0")
 
 
+class TestRecommendVulkan(unittest.TestCase):
+    def test_vulkan_backend_sets_vulkan_flag(self):
+        amd = [{"index": 0, "name": "Radeon Pro V620", "vram_mib": 32768,
+                "gfx_arch": "gfx1030"}]
+        r = hardware.recommend(gpus=[], cpu={"avx512_hint": False}, amd_gpus=amd,
+                               amd_backend="vulkan")
+        self.assertEqual(r["cmake_flags"]["GGML_VULKAN"], "ON")
+        self.assertNotIn("GGML_HIP", r["cmake_flags"])
+        self.assertNotIn("AMDGPU_TARGETS", r["cmake_flags"])
+        self.assertEqual(r["runtime"]["n-gpu-layers"], "99")
+
+    def test_vulkan_ignores_amd_targets(self):
+        amd = [{"index": 0, "name": "AMD", "vram_mib": 16384, "gfx_arch": "gfx1100"}]
+        r = hardware.recommend(gpus=[], cpu={"avx512_hint": False}, amd_gpus=amd,
+                               amd_backend="vulkan", amd_targets="gfx1030")
+        self.assertNotIn("AMDGPU_TARGETS", r["cmake_flags"])
+
+    def test_default_backend_is_rocm(self):
+        amd = [{"index": 0, "name": "AMD", "vram_mib": 16384, "gfx_arch": "gfx1100"}]
+        r = hardware.recommend(gpus=[], cpu={"avx512_hint": False}, amd_gpus=amd)
+        self.assertEqual(r["cmake_flags"]["GGML_HIP"], "ON")
+        self.assertNotIn("GGML_VULKAN", r["cmake_flags"])
+
+
+class TestVulkanDetection(unittest.TestCase):
+    def test_drm_amd_cards_names_v620(self):
+        # _drm_amd_cards reads sysfs; test the name lookup directly.
+        self.assertEqual(hardware._AMD_DEVICE_NAMES["0x73a1"], "Radeon Pro V620")
+
+    def test_vulkaninfo_walk_finds_amd_device(self):
+        # A minimal vulkaninfo --json shape: one AMD device with a device-local
+        # memory heap. The walker must find it and compute VRAM in MiB.
+        data = {
+            "VkPhysicalDeviceProperties": {
+                "deviceName": "Radeon Pro V620",
+                "vendorID": 0x1002,
+                "memoryHeaps": [
+                    {"flags": 1, "size": 32 * 1024 * 1024 * 1024},
+                    {"flags": 0, "size": 0},
+                ],
+            }
+        }
+        import json as _json
+        orig = hardware._run
+        hardware._run = lambda cmd, timeout=10: _json.dumps(data)
+        try:
+            gpus = hardware._vulkaninfo_gpus()
+        finally:
+            hardware._run = orig
+        self.assertEqual(len(gpus), 1)
+        self.assertEqual(gpus[0]["name"], "Radeon Pro V620")
+        self.assertEqual(gpus[0]["vram_mib"], 32768)
+
+    def test_vulkaninfo_skips_non_amd(self):
+        data = {"VkPhysicalDeviceProperties": {
+            "deviceName": "NVIDIA RTX 4090", "vendorID": 0x10DE,
+            "memoryHeaps": [{"flags": 1, "size": 24 * 1024 * 1024 * 1024}]}}
+        import json as _json
+        orig = hardware._run
+        hardware._run = lambda cmd, timeout=10: _json.dumps(data)
+        try:
+            gpus = hardware._vulkaninfo_gpus()
+        finally:
+            hardware._run = orig
+        self.assertEqual(gpus, [])
+
+    def test_vulkaninfo_absent_returns_empty(self):
+        orig = hardware._run
+        hardware._run = lambda cmd, timeout=10: ""
+        try:
+            self.assertEqual(hardware._vulkaninfo_gpus(), [])
+        finally:
+            hardware._run = orig
+
+
 class TestAmdVramBandwidth(unittest.TestCase):
     def test_mi300x(self):
         self.assertEqual(vp._preset_vram_bw("AMD Instinct MI300X"), 5300)

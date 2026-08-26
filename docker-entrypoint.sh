@@ -45,6 +45,7 @@ if [ ! -f "$CFG" ]; then
   "router_api_key": "",
   "cmake_flags": {},
   "amd_gpu_targets": "",
+  "amd_backend": "rocm",
   "git_remote": "https://github.com/ggml-org/llama.cpp"
 }
 EOF

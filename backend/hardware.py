@@ -144,6 +144,107 @@ def glob_render_nodes():
     except Exception:
         return []
 
+# ---------------------------------------------------------------- Vulkan
+# Vulkan has no KFD dependency (that's ROCm-only), so AMD GPUs are enumerated
+# from the Vulkan ICDs + the DRM card vendor/device IDs instead. This is what
+# lets a Vulkan build see the same cards a ROCm build does, without /dev/kfd.
+
+# AMD PCI vendor id (0x1002) and the device ids we can name. 0x73a1 = Radeon
+# Pro V620 (Navi 21 / gfx1030) — Tyler's cards. Unknown AMD device ids still
+# count as Vulkan-capable GPUs; only the name is generic.
+_AMD_DEVICE_NAMES = {
+    "0x73a1": "Radeon Pro V620",
+    "0x73bf": "Radeon RX 6900 XT",
+    "0x73a5": "Radeon RX 6900 XT",
+    "0x73a2": "Radeon Pro W6800",
+    "0x744c": "Radeon RX 7900 XTX",
+    "0x7448": "Radeon RX 7900 XT",
+    "0x74a0": "Radeon Pro W7900",
+}
+
+def _drm_amd_cards():
+    """Yield (device_id_hex, name) per AMD DRM card from /sys/class/drm.
+
+    Reads each card's device/vendor sysfs files; only AMD (0x1002) cards are
+    returned. Never raises. This is the Vulkan fallback when `vulkaninfo` is
+    absent — it counts AMD Vulkan-capable GPUs without any Vulkan tooling.
+    """
+    base = "/sys/class/drm"
+    if not os.path.isdir(base):
+        return
+    for card in sorted(os.listdir(base)):
+        if not card.startswith("card"):
+            continue
+        dev = _read(os.path.join(base, card, "device", "device"))
+        vendor = _read(os.path.join(base, card, "device", "vendor"))
+        if not dev or not vendor:
+            continue
+        if vendor.lower() != "0x1002":
+            continue
+        dev = dev.lower()
+        yield dev, _AMD_DEVICE_NAMES.get(dev, "AMD GPU")
+
+def _vulkaninfo_gpus():
+    """Parse `vulkaninfo --json` for AMD device name + VRAM, if present.
+
+    Returns a list of {name, vram_mib} for AMD devices, or [] when vulkaninfo
+    is absent or reports nothing. Best-effort: any parse failure yields [].
+    """
+    out = _run(["vulkaninfo", "--json"], timeout=20)
+    if not out:
+        return []
+    try:
+        import json as _json
+        data = _json.loads(out)
+    except Exception:
+        return []
+    gpus = []
+    # vulkaninfo --json nests devices under VkPhysicalDeviceProperties; the
+    # exact path varies by version, so walk the tree for dicts that carry both
+    # a deviceName and a vendorID of 0x1002 (AMD).
+    def _walk(node):
+        if isinstance(node, dict):
+            name = node.get("deviceName")
+            vid = node.get("vendorID")
+            if name and vid == 0x1002:
+                vram = 0
+                # VRAM lives in memoryHeaps (VK_MEMORY_HEAP_DEVICE_LOCAL_BIT=1).
+                for heap in (node.get("memoryHeaps") or []):
+                    if isinstance(heap, dict) and heap.get("flags", 0) & 1:
+                        vram = max(vram, int(heap.get("size", 0) or 0))
+                gpus.append({"name": name,
+                             "vram_mib": int(vram / (1024 * 1024)) if vram else None})
+            for v in node.values():
+                _walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v)
+    _walk(data)
+    return gpus
+
+def detect_vulkan_gpus():
+    """AMD GPUs visible to a Vulkan build. Returns [{index, name, vram_mib,
+    gfx_arch}], same shape as detect_amd_gpus() so the dashboard's GPU
+    telemetry and VRAM-fit ratings keep working.
+
+    Prefers `vulkaninfo --json` (device name + VRAM); falls back to the DRM
+    card vendor/device IDs (count + name only, VRAM unknown). gfx_arch is
+    left "" — Vulkan doesn't expose the gfx target the way KFD does, and the
+    build doesn't need it (no AMDGPU_TARGETS for Vulkan).
+    """
+    if not osplat.IS_LINUX:
+        return []
+    gpus = []
+    for i, g in enumerate(_vulkaninfo_gpus()):
+        gpus.append({"index": i, "name": g["name"], "vram_mib": g["vram_mib"],
+                     "gfx_arch": ""})
+    if gpus:
+        return gpus
+    # Fallback: count AMD DRM cards. VRAM/arch unknown, but the user sees the
+    # right number of Vulkan-capable GPUs.
+    return [{"index": i, "name": name, "vram_mib": None, "gfx_arch": ""}
+            for i, (dev, name) in enumerate(_drm_amd_cards())]
+
 def detect_all_gpus():
     """NVIDIA + AMD GPUs combined, for VRAM-fit ratings and auto-tune. Each row
     carries `vram_mib` and `name`; NVIDIA rows add `compute_cap`, AMD rows add
@@ -188,11 +289,16 @@ def detect_cpu():
                 "avx512_hint": False}
     return _detect_cpu_windows()
 
-def recommend(gpus=None, cpu=None, amd_gpus=None, amd_targets=None):
+def recommend(gpus=None, cpu=None, amd_gpus=None, amd_targets=None, amd_backend=None):
     """Return {cmake_flags:{...}, notes:[...], runtime:{...}} for this machine.
 
     amd_targets overrides the AMDGPU_TARGETS list (config.json `amd_gpu_targets`);
     when None, detected archs are used, falling back to AMDGPU_TARGETS_DEFAULT.
+
+    amd_backend selects the AMD accelerator: "rocm" (default, GGML_HIP) or
+    "vulkan" (GGML_VULKAN). Vulkan is the right choice on RDNA2 (gfx1030) cards
+    with no matrix cores, where ROCm's multi-GPU layer-split collapses to ~7
+    tok/s but Vulkan holds ~16 tok/s regardless of split or context length.
     """
     gpus = detect_gpus() if gpus is None else gpus
     amd_gpus = detect_amd_gpus() if amd_gpus is None else amd_gpus
@@ -208,12 +314,18 @@ def recommend(gpus=None, cpu=None, amd_gpus=None, amd_targets=None):
                 "gpus": gpus, "cpu": cpu}
 
     if amd_gpus:
-        flags["GGML_HIP"] = "ON"
-        targets = amd_targets or _amd_targets_for(amd_gpus) or AMDGPU_TARGETS_DEFAULT
-        flags["AMDGPU_TARGETS"] = targets
-        notes.append(f"ROCm/HIP build for AMD arch(s) {targets.replace(';', ', ')} "
-                     f"({len(amd_gpus)} GPU(s)).")
-        notes.append("Set config.json `amd_gpu_targets` to narrow this to your GPU(s).")
+        if amd_backend == "vulkan":
+            flags["GGML_VULKAN"] = "ON"
+            notes.append(f"Vulkan build (RADV) for AMD RDNA2 ({len(amd_gpus)} GPU(s)).")
+            notes.append("Vulkan avoids ROCm's multi-GPU PCIe penalty on RDNA2 — "
+                         "holds ~16 tok/s at 100k context with a 3-GPU split.")
+        else:
+            flags["GGML_HIP"] = "ON"
+            targets = amd_targets or _amd_targets_for(amd_gpus) or AMDGPU_TARGETS_DEFAULT
+            flags["AMDGPU_TARGETS"] = targets
+            notes.append(f"ROCm/HIP build for AMD arch(s) {targets.replace(';', ', ')} "
+                         f"({len(amd_gpus)} GPU(s)).")
+            notes.append("Set config.json `amd_gpu_targets` to narrow this to your GPU(s).")
     elif gpus:
         archs = sorted({g["compute_cap"].replace(".", "") for g in gpus if g["compute_cap"]})
         flags["GGML_CUDA"] = "ON"

@@ -41,6 +41,7 @@ DEFAULTS = {
     "vllm_port":   8081,                      # port vLLM serves on (WSL localhost-forwarded to Windows)
     "cmake_flags": {},                       # persisted build flags (from hardware detect)
     "amd_gpu_targets": "",                   # AMDGPU_TARGETS for ROCm/HIP builds ("" = auto-detect, else e.g. "gfx1030;gfx1100")
+    "amd_backend": "rocm",                   # AMD accelerator: "rocm" (GGML_HIP) or "vulkan" (GGML_VULKAN)
     "git_remote":  "https://github.com/ggml-org/llama.cpp",
     # ik_llama mirrors the llama.cpp path trio and, like it, ships empty: these
     # belong to bootstrap and this machine, not to the defaults every install

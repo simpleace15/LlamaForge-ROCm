@@ -17,7 +17,7 @@ The Build tab reports two independent things: how your local `llama_src` checkou
 **Auto-detected build flags.** `backend/hardware.py`'s `recommend()` inspects your GPU(s) (via `nvidia-smi`, or Apple's unified memory on macOS) and CPU, then returns a dict of `{cmake_flags, notes, runtime, gpus, cpu}`:
 
 - On **macOS**, it returns `GGML_METAL=ON` and `GGML_NATIVE=ON`, with a note that Metal uses unified memory as VRAM. No CUDA branch runs on Mac.
-- If one or more **AMD GPUs** are detected (ROCm KFD topology + render nodes), it sets `GGML_HIP=ON` and `AMDGPU_TARGETS` to the detected archs (or the configured `amd_gpu_targets` override, falling back to a broad default set). See [Docker & ROCm](docker.md).
+- If one or more **AMD GPUs** are detected (ROCm KFD topology + render nodes), it sets `GGML_HIP=ON` and `AMDGPU_TARGETS` to the detected archs (or the configured `amd_gpu_targets` override, falling back to a broad default set). With `amd_backend: "vulkan"` in `config.json`, it instead sets `GGML_VULKAN=ON` (no `AMDGPU_TARGETS`) — the right choice on RDNA2 (gfx1030) cards where ROCm's multi-GPU split collapses to ~7 tok/s but Vulkan holds ~16 tok/s. See [Docker & ROCm](docker.md).
 - If one or more **NVIDIA GPUs** are detected, it sets `GGML_CUDA=ON`, and if compute capabilities were readable, `CMAKE_CUDA_ARCHITECTURES` to the sorted, deduplicated list of detected architectures (e.g. `86;89`). It also sets `GGML_CUDA_FA_ALL_QUANTS=ON` to enable flash attention across all quantized KV cache combinations.
 - If **no GPU** is detected, it configures a CPU-only build (no CUDA/HIP flags) and notes that fact.
 - On Windows/Linux either way, it always sets `GGML_NATIVE=ON`. If the CPU looks like it supports AVX-512 (`avx512_hint` — on Linux read from real CPU flags; on Windows a name-based heuristic for Ryzen 7/9 (7000- and 9000-series), Xeon, and Threadripper parts), it additionally sets `GGML_AVX512=ON`, `GGML_AVX512_VNNI=ON`, `GGML_AVX512_VBMI=ON`, and `GGML_AVX512_BF16=ON`.
@@ -53,6 +53,7 @@ A rebuild (`BuildManager.run_build()`) runs in a background thread: it first val
 | Recommended flags | `hardware.recommend()` | Returns `cmake_flags`, human-readable `notes`, a `runtime` suggestion, and the detected `gpus`/`cpu`. |
 | macOS flags | `hardware.recommend()` | `GGML_METAL=ON`, `GGML_NATIVE=ON`. |
 | AMD (ROCm) flags | `hardware.recommend()` | `GGML_HIP=ON`, `AMDGPU_TARGETS=<archs>` (detected, or `amd_gpu_targets` override, else a broad default). |
+| AMD (Vulkan) flags | `hardware.recommend()` | `GGML_VULKAN=ON` (no `AMDGPU_TARGETS`) when `amd_backend: "vulkan"`. |
 | NVIDIA GPU flags | `hardware.recommend()` | `GGML_CUDA=ON`, `CMAKE_CUDA_ARCHITECTURES=<archs>` (if readable), `GGML_CUDA_FA_ALL_QUANTS=ON`. |
 | CPU-only flags | `hardware.recommend()` | No CUDA/HIP flags; `GGML_NATIVE=ON` still set. |
 | AVX-512 flags | `hardware.recommend()` | `GGML_AVX512`, `GGML_AVX512_VNNI`, `GGML_AVX512_VBMI`, `GGML_AVX512_BF16` — all `ON` when `avx512_hint` is true. |

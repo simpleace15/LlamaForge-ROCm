@@ -138,6 +138,30 @@ llama.cpp with `GGML_HIP=ON` instead of CUDA.
   NVIDIA and AMD GPUs, NVIDIA is detected first; on a pure-AMD box the HIP build
   is selected automatically.
 
+## Vulkan (AMD RDNA2) support
+
+This fork also adds **Vulkan** as an AMD accelerator alongside ROCm/HIP. It's
+the right choice on **RDNA2** cards (gfx1030 — Radeon Pro V620, RX 6000) that
+have no hardware matrix cores: ROCm's multi-GPU layer-split forces activations
+across PCIe every token (no NVLink on these cards), collapsing a 3-GPU split to
+~7 tok/s, while Vulkan's multi-GPU path holds ~16 tok/s regardless of split or
+context length.
+
+- **Select it** by setting `"amd_backend": "vulkan"` in `config.json` (default
+  is `"rocm"`). The Setup and Build tabs then recommend a `GGML_VULKAN=ON` build
+  instead of `GGML_HIP=ON`.
+- **No `AMDGPU_TARGETS`** — that's HIP-specific. Vulkan builds need only
+  `GGML_VULKAN=ON`.
+- **No `/dev/kfd`** — Vulkan uses only the DRM render nodes (`/dev/dri/renderD*`),
+  which are already passed through. RADV (the Mesa Vulkan driver) runs on the
+  host; the container just needs the Vulkan loader.
+- **Device detection** prefers `vulkaninfo --json` (device name + VRAM) and
+  falls back to the DRM card vendor/device IDs, so the dashboard still shows
+  your GPUs and their VRAM-fit ratings.
+- **ROCm stays available** — Vulkan is additive. For single-GPU, ROCm is
+  marginally faster (16.7 vs 16.2 tok/s); switch back with `"amd_backend":
+  "rocm"`.
+
 ## Docker deployment
 
 A `Dockerfile` and `docker-compose.yml` build the ROCm variant of llama.cpp and
