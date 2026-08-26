@@ -160,8 +160,9 @@ switch between ROCm and Vulkan at runtime — no rebuild, no second container.
 - **No `AMDGPU_TARGETS`** for Vulkan — that's HIP-specific. Vulkan builds need
   only `GGML_VULKAN=ON`.
 - **No `/dev/kfd`** for Vulkan — it uses only the DRM render nodes
-  (`/dev/dri/renderD*`), which are already passed through. RADV (the Mesa
-  Vulkan driver) runs on the host; the container just needs the Vulkan loader.
+  (`/dev/dri/renderD*`), which are already passed through. The RADV driver
+  (`mesa-vulkan-drivers`) is installed *inside* the container — `/dev/dri`
+  passthrough exposes the device nodes, not the driver.
 - **Device detection** prefers `vulkaninfo --json` (device name + VRAM) and
   falls back to the DRM card vendor/device IDs, so the dashboard still shows
   your GPUs and their VRAM-fit ratings.

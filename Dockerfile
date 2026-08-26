@@ -37,11 +37,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git build-essential cmake ninja-build python3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Vulkan headers + loader, needed to compile/link the Vulkan backend. Installed
-# whenever Vulkan is in the build (both or vulkan).
+# Vulkan headers + loader + shader compiler, needed to compile/link the Vulkan
+# backend. glslc is the Vulkan shader compiler (its own package, NOT in
+# libvulkan-dev); spirv-headers is required by FindVulkan.cmake
+# (SPIRV-Headers_DIR). Installed whenever Vulkan is in the build (both/vulkan).
 RUN if [ "${AMD_BACKEND}" != "rocm" ]; then \
         apt-get update && apt-get install -y --no-install-recommends \
-            libvulkan-dev vulkan-tools mesa-vulkan-drivers \
+            libvulkan-dev vulkan-tools mesa-vulkan-drivers glslc spirv-headers \
         && rm -rf /var/lib/apt/lists/*; \
     fi
 
@@ -52,8 +54,9 @@ RUN git clone --depth 1 --branch "${LLAMACPP_REF}" https://github.com/ggml-org/l
 # llama.cpp's own .devops/rocm.Dockerfile) so the HIP build uses the base
 # image's HIP clang rather than relying on PATH defaults. GGML_BACKEND_DL=ON
 # builds the backends as dynamically-loaded .so files, which the runtime stage
-# copies alongside the binary. RADV (the Mesa Vulkan driver) is provided by the
-# host and passed through via /dev/dri — the container only needs the loader.
+# copies alongside the binary. The RADV Vulkan driver is installed in the
+# runtime stage (mesa-vulkan-drivers); /dev/dri passthrough only exposes the
+# device nodes, not the driver itself.
 RUN BACKEND_FLAGS="" \
     && if [ "${AMD_BACKEND}" != "vulkan" ]; then \
          BACKEND_FLAGS="-DGGML_HIP=ON -DAMDGPU_TARGETS=${AMDGPU_TARGETS}"; \
@@ -77,8 +80,8 @@ RUN mkdir -p /src/lib \
 
 # ---- stage 2: runtime ----
 # The ROCm toolchain image is kept for the runtime so rocm-smi is present
-# (perf-level pinning + telemetry); the Vulkan loader is added on top so the
-# dual-backend binary can also talk to the host's RADV ICD.
+# (perf-level pinning + telemetry); the Vulkan loader + RADV driver are added
+# on top so the dual-backend binary can also use the Vulkan backend.
 FROM rocm/dev-ubuntu-24.04:7.2.1-complete AS runtime
 
 ARG AMD_BACKEND=both
@@ -89,11 +92,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 lsof libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Vulkan loader (libvulkan1) so the Vulkan backend can reach the host's RADV
-# ICD. Installed whenever Vulkan is in the build (both or vulkan).
+# Vulkan loader (libvulkan1) + the RADV driver so the Vulkan backend can reach
+# the GPU. mesa-vulkan-drivers ships the RADV ICD (radeon_icd.x86_64.json) and
+# libvulkan_radeon.so — these must be INSIDE the container; /dev/dri passthrough
+# does NOT provide the driver. Installed whenever Vulkan is in the build.
 RUN if [ "${AMD_BACKEND}" != "rocm" ]; then \
         apt-get update && apt-get install -y --no-install-recommends \
-            libvulkan1 vulkan-tools \
+            libvulkan1 vulkan-tools mesa-vulkan-drivers \
         && rm -rf /var/lib/apt/lists/*; \
     fi
 
@@ -118,9 +123,9 @@ COPY docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x docker-entrypoint.sh
 
 # Two volumes: config (config.json, models.ini, logs) and models (GGUF files).
-VOLUME [\"/app/config\", \"/app/models\"]
+VOLUME ["/app/config", "/app/models"]
 
 # llama.cpp router + LlamaForge dashboard.
 EXPOSE 8080 8090
 
-ENTRYPOINT [\"/app/docker-entrypoint.sh\"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

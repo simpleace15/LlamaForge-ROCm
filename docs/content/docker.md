@@ -90,11 +90,12 @@ docker build --build-arg AMD_BACKEND=vulkan -t llamaforge-vulkan .
 ```
 
 The default image builds on the ROCm toolchain image (24.04 + ROCm 7.2.1) with
-the Vulkan headers + loader added on top, so a single `llama-server` carries
-both backends. The runtime stage keeps `rocm-smi` (perf-level pinning +
-telemetry) and adds `libvulkan1` so the Vulkan backend can reach the host's
-RADV ICD. `--device` selects the backend at runtime, so one instance serves
-both ROCm and Vulkan without a rebuild or a second container.
+the Vulkan headers + loader + shader compiler (`glslc`, `spirv-headers`) added
+on top, so a single `llama-server` carries both backends. The runtime stage
+keeps `rocm-smi` (perf-level pinning + telemetry) and adds `libvulkan1` +
+`mesa-vulkan-drivers` so the Vulkan backend has both the loader and the RADV
+driver inside the container. `--device` selects the backend at runtime, so one
+instance serves both ROCm and Vulkan without a rebuild or a second container.
 
 ## Docker deployment
 
