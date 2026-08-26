@@ -29,8 +29,7 @@ class RouterCase(unittest.TestCase):
                 ]})
             if path.startswith("/metrics?model="):
                 return (f"llamacpp:prompt_tokens_total {prompt}\n"
-                        f"llamacpp:tokens_predicted_total {gen}\n"
-                        f"llamacpp:predicted_tokens_seconds 12.5\n")
+                        f"llamacpp:tokens_predicted_total {gen}\n")
             if path == "/metrics":
                 raise urllib.error.HTTPError(path, 400, "model name missing", {}, None)
             raise AssertionError("unexpected path " + path)
@@ -47,7 +46,10 @@ class TestRouterMetricsScrape(RouterCase):
         m = self.tr.data["models"]["nomic"]
         self.assertEqual(m["prompt"], 5)
         self.assertEqual(m["generated"], 40)
-        self.assertGreater(self.tr.live["gen_per_sec"], 0)
+        # Throughput is derived from the token deltas over POLL_SECS (5s), not
+        # llama.cpp's decaying gauges: dp=5 -> 1.0 tok/s, dg=40 -> 8.0 tok/s.
+        self.assertEqual(self.tr.live["prompt_per_sec"], 1.0)
+        self.assertEqual(self.tr.live["gen_per_sec"], 8.0)
 
     def test_scrape_includes_model_param_never_bare(self):
         seen = []
@@ -96,8 +98,7 @@ class TestMultiModelScrape(RouterCase):
                 mid = urllib.parse.unquote(path.split("=", 1)[1])
                 p, g = models[mid]
                 return (f"llamacpp:prompt_tokens_total {p}\n"
-                        f"llamacpp:tokens_predicted_total {g}\n"
-                        f"llamacpp:predicted_tokens_seconds 12.5\n")
+                        f"llamacpp:tokens_predicted_total {g}\n")
             if path == "/metrics":
                 raise urllib.error.HTTPError(path, 400, "model name missing", {}, None)
             raise AssertionError("unexpected path " + path)

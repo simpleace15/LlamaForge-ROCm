@@ -19,8 +19,6 @@ STATS_FILE = os.path.join(ROOT, "stats.json")
 # llama.cpp rename is a one-line fix; any missing metric degrades to 0.
 M_PROMPT_TOTAL   = "llamacpp:prompt_tokens_total"
 M_GEN_TOTAL      = "llamacpp:tokens_predicted_total"
-M_PROMPT_PER_SEC = "llamacpp:prompt_tokens_seconds"
-M_GEN_PER_SEC    = "llamacpp:predicted_tokens_seconds"
 M_REQ_PROCESSING = "llamacpp:requests_processing"
 
 # vLLM Prometheus counters (different names than llama.cpp). Any missing -> 0.
@@ -207,16 +205,19 @@ class StatsTracker:
                 scraped[model] = {}
 
         # Aggregate live throughput across all resident models, and diff each
-        # model's token counters against its own previous poll.
-        tot_pps = tot_gps = 0.0
+        # model's token counters against its own previous poll. Throughput is
+        # derived from the token DELTAS (dp/dg over POLL_SECS), NOT llama.cpp's
+        # instantaneous decaying gauges (prompt_tokens_seconds /
+        # predicted_tokens_seconds) — those only read non-zero during the exact
+        # instant tokens are being processed, so a 5s poll almost always catches
+        # them at 0 and the Live Throughput card would sit at 0.0 forever.
+        tot_dp = tot_dg = 0
         tot_req = 0
         with self.lock:
             for model in models:
                 metrics = scraped.get(model, {})
                 p = metrics.get(M_PROMPT_TOTAL, 0.0)
                 g = metrics.get(M_GEN_TOTAL, 0.0)
-                tot_pps += metrics.get(M_PROMPT_PER_SEC, 0.0)
-                tot_gps += metrics.get(M_GEN_PER_SEC, 0.0)
                 tot_req += int(metrics.get(M_REQ_PROCESSING, 0.0))
                 self._model(model)["loaded_secs"] += POLL_SECS
                 self._dirty = True
@@ -228,6 +229,8 @@ class StatsTracker:
                         dp = dg = 0
                     if dp or dg:
                         self._record_tokens(model, dp, dg)
+                    tot_dp += dp
+                    tot_dg += dg
                     was_idle = self._idle.get(model, True)
                     if dg > 0 and was_idle:   # fresh generation burst ~= one run
                         self._model(model)["runs"] += 1
@@ -245,8 +248,8 @@ class StatsTracker:
 
             self.live.update(
                 router_up=True,
-                prompt_per_sec=tot_pps,
-                gen_per_sec=tot_gps,
+                prompt_per_sec=round(tot_dp / POLL_SECS, 1),
+                gen_per_sec=round(tot_dg / POLL_SECS, 1),
                 requests_processing=tot_req,
                 loaded_model=(models[0] if models else None),
                 loaded_models=list(models),
