@@ -82,6 +82,9 @@ export async function loadSetup() {
       <div class="kv"><span class="k">default context size</span>
         <span class="v"><input id="ctx-size" type="number" min="512" step="1024" value="${esc(String(cfgOf().ctx_size ?? 150000))}" style="background:var(--inset);border:1px solid var(--hair);color:var(--ink);font-family:var(--mono);font-size:12px;padding:6px;width:110px"> <button id="ctx-save">Save</button></span></div>
       <div class="note">The global context window applied to every model without its own override. Lower it to fit more models in VRAM at once (each resident model reserves a KV cache that scales with this). Per-model <b>ctx-size</b> overrides still win.</div>
+      <div class="kv"><span class="k">max resident models</span>
+        <span class="v"><input id="models-max" type="number" min="1" max="16" step="1" value="${esc(String(cfgOf().models_max ?? 5))}" style="background:var(--inset);border:1px solid var(--hair);color:var(--ink);font-family:var(--mono);font-size:12px;padding:6px;width:110px"> <button id="mm-save">Save</button></span></div>
+      <div class="note">How many models the router keeps loaded at once (LRU evicts the oldest under pressure; the Models tab shows a warning when your set can't fit in VRAM). Each resident model holds weights + KV cache, so size this to your VRAM pool &mdash; e.g. on 90&nbsp;GB a 62&nbsp;GB model + a small 4B + KV caches is already ~75&nbsp;GB.</div>
       <div class="kv"><span class="k">auto-load a model on launch</span>
         <span class="v"><select id="auto-load" style="background:var(--inset);border:1px solid var(--hair);color:var(--ink);font-family:var(--mono);font-size:12px;padding:6px">
           <option value="">none</option>
@@ -141,6 +144,13 @@ export async function loadSetup() {
     if (!Number.isInteger(val) || val < 512) { toast("context size must be ≥ 512", "err"); return; }
     const r = await api("/api/config", {ctx_size: val});
     toast(r.ok ? `Default context: ${val}` : "save failed", r.ok ? "ok" : "err");
+  };
+  const mmSave = $("#mm-save");
+  if (mmSave) mmSave.onclick = async () => {
+    const val = Number($("#models-max").value);
+    if (!Number.isInteger(val) || val < 1 || val > 16) { toast("max resident models must be 1–16", "err"); return; }
+    const r = await api("/api/config", {models_max: val});
+    toast(r.ok ? `Max resident models: ${val} (applies on router restart)` : "save failed", r.ok ? "ok" : "err");
   };
   const amdBackendApply = $("#amd-backend-apply");
   if (amdBackendApply) amdBackendApply.onclick = async () => {

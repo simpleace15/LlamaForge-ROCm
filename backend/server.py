@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import config, wiki, anthropic_shim
 import routes
+import glm_defaults            # noqa: F401 — patches config.apply_ctx_defaults (GLM min-p default)
 from routes import ApiError, Req
 
 # Everything else is reached as routes.<name> rather than imported by name: a

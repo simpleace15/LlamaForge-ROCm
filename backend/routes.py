@@ -337,6 +337,30 @@ def vllm_save(model_id, settings, is_running, restart):
 
 
 # ---------- model list (router status + ini settings) ----------
+def _device_of(rm, sect, glob):
+    """The effective `--device` for a model row, in priority order.
+
+    Mirrors llama.cpp's merge order (router CLI > section > [*] > auto):
+    the per-model section value is what this fork writes, the router CLI is
+    only reachable when the fork itself launched with one (per-model mode
+    suppresses it, see _router_device), and [*] is the shared default.
+    """
+    args = (rm.get("status", {}) or {}).get("args", []) or []
+    if "--device" in args:
+        return args[args.index("--device") + 1]
+    return sect.get("device") or glob.get("device") or ""
+
+
+def _amd_tag(sect, glob):
+    """'vulkan' / 'rocm' / '' from a model's device= value (Vulkan*/HIP*)."""
+    dev = (sect.get("device") or glob.get("device") or "")
+    if dev.lower().startswith("vulkan"):
+        return "vulkan"
+    if dev.upper().startswith("HIP"):
+        return "rocm"
+    return ""
+
+
 def model_state():
     st, data = router("/models")
     rmap = {m["id"]: m for m in data.get("data", [])} if st == 200 else {}
@@ -355,6 +379,7 @@ def model_state():
             "in_ini": mid in ini,
             "settings": sect,       # only keys explicitly set for this model
             "eff_ctx": _eff(rm, glob, "ctx-size", "--ctx-size"),
+            "device": _device_of(rm, sect, glob),   # actual --device the child got
             "file_gib": _file_gib(sect.get("model")),
         })
     # also expose ini-only models not yet known to a (possibly-down) router
@@ -363,9 +388,11 @@ def model_state():
             models.append({"id": name, "status": "offline", "failed": False,
                            "modalities": ["text"], "in_ini": True,
                            "settings": ini[name], "eff_ctx": ini[name].get("ctx-size", glob.get("ctx-size", "?")),
+                           "device": ini[name].get("device", ""),
                            "file_gib": _file_gib(ini[name].get("model"))})
     models.sort(key=lambda m: (m["status"] != "loaded", m["id"]))
-    return {"models": models, "global": glob}
+    return {"models": models, "global": glob,
+            "resident_warning": resident_set_warning()}
 
 
 def _file_gib(path):
@@ -374,6 +401,57 @@ def _file_gib(path):
         return round(os.path.getsize(path) / 1024**3, 2) if path else None
     except OSError:
         return None
+
+
+def resident_set_warning(models_max=None):
+    """Feasibility warning for the resident set, or None when it fits.
+
+    The router holds up to models_max children resident at once; each holds
+    weights (predicted by vram_predict from the GGUF) plus KV. Sums the
+    weight footprint of every ini section with a resolvable model path,
+    multiplies by how many copies could be resident, and compares against
+    the total AMD VRAM pool. Returns a human string when the pool can't hold
+    models_max copies of the largest loadable set, else None. Never raises.
+    """
+    try:
+        ini = config.read_sections()
+        gpus = hardware.detect_amd_gpus()
+        total_gib = sum((g.get("vram_mib") or 0) for g in gpus) / 1024.0
+        if total_gib <= 0:
+            return None                      # no AMD pool to plan against
+        models_max = int(models_max or cfg().get("models_max")
+                         or config.DEFAULTS["models_max"])
+        weights = []                          # per-model weight GiB (estimates)
+        for mid, sect in ini.items():
+            if mid == "*":
+                continue
+            path = (sect or {}).get("model") or ""
+            if not path or not os.path.exists(path):
+                continue
+            try:
+                gib = os.path.getsize(path) / 1024**3
+            except OSError:
+                continue
+            if gib > 0:
+                weights.append(gib)
+        if not weights:
+            return None
+        weights.sort(reverse=True)
+        # Worst case: the models_max largest models resident together.
+        resident = weights[:models_max]
+        need = sum(resident)
+        # usable pool leaves headroom for KV caches + activations (~15%)
+        usable = total_gib * 0.85
+        if need > usable:
+            tops = ", ".join(f"{w:.0f} GB" for w in resident[:3])
+            return (f"resident-set warning: the {len(resident)} largest loadable "
+                    f"models (~{need:.0f} GB: {tops}{', ...' if len(resident) > 3 else ''}) "
+                    f"will not co-reside in the {total_gib:.0f} GB VRAM pool "
+                    f"(~{usable:.0f} GB usable). Lower models_max, or expect "
+                    f"LRU eviction to swap them under load.")
+        return None
+    except Exception:
+        return None                          # planner is advisory; never block
 
 
 def _eff(rm, glob, key, flag):
@@ -924,6 +1002,58 @@ def post_model_save(req):
     return 200, {"ok": True, "backend": backend.name, **out}
 
 
+def _backend_device_list(backend):
+    """Device list for a per-model selection, sized to the detected GPUs."""
+    return hardware.device_list("vulkan" if backend == "vulkan" else "rocm",
+                                len(hardware.detect_amd_gpus()))
+
+
+def post_model_backend(req):
+    """Per-model AMD backend selection (models.ini section keys).
+
+    "auto" clears device= and the backend flag set (llama.cpp auto-selects);
+    "vulkan"/"rocm" write device= plus that backend's benchmark-tuned
+    defaults. A loaded model is unloaded first: llama.cpp reads --device at
+    load time, so the change needs a reload to take effect.
+    """
+    mid = req.body.get("model", "")
+    backend = req.body.get("backend", "auto")
+    if backend not in ("auto", "vulkan", "rocm"):
+        raise ApiError(400, f"unknown per-model backend: {backend}")
+    if not mid:
+        raise ApiError(400, "missing model")
+    updates = {}
+    if backend == "auto":
+        # Clear only the keys this route owns; user knobs untouched.
+        for k in ("device", "split-mode", "n-gpu-layers", "cache-type-k",
+                  "cache-type-v", "jinja", "ubatch-size", "batch-size"):
+            sect = config.read_sections().get(mid, {})
+            if k in sect:
+                updates[k] = None
+    else:
+        # Never write a router-level --device (it would clobber sections);
+        # this writes the MODEL's OWN device list, sized to detected GPUs.
+        dev = _backend_device_list(backend)
+        if dev:
+            updates["device"] = dev
+        if backend == "vulkan":
+            updates.update({"split-mode": "layer", "n-gpu-layers": "99",
+                            "cache-type-k": "q8_0", "cache-type-v": "q8_0",
+                            "jinja": "true"})
+        else:
+            updates.update({"ubatch-size": "1024", "batch-size": "4096"})
+    if updates:
+        config.set_keys(mid, updates)
+        # --device is read at load time: a running model must reload to pick
+        # the new backend up (same reason knob saves unload first).
+        st, data = router("/models")
+        if st == 200 and any(m["id"] == mid and m.get("status", {}).get("value") == "loaded"
+                             for m in data.get("data", [])):
+            router("/models/unload", "POST", {"model": mid})
+        router("/models?reload=1")
+    return 200, {"ok": True, "model": mid, "backend": backend, "applied": updates}
+
+
 def post_model_delete(req):
     mid, backend = _backend_for(req)
     try:
@@ -1224,6 +1354,9 @@ def _v_mode(v):  return v if v in ("lite", "advanced") else None
 def _v_theme(v): return v if v in ("", "light", "dark") else None
 def _v_ctx(v):   return v if isinstance(v, int) and 512 <= v <= 1048576 else None
 def _v_amd_backend(v): return v if v in ("rocm", "vulkan") else None
+def _v_models_max(v):
+    """Concurrently-resident model slots: small positive int (1..32)."""
+    return v if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 16 else None
 def _v_dirs(v):
     return v if isinstance(v, list) and all(isinstance(x, str) for x in v) else None
 
@@ -1249,6 +1382,7 @@ CONFIG_WRITABLE = {
     "onboarded":               _v_bool,
     "auto_load_model":         _v_str,
     "ctx_size":                _v_ctx,
+    "models_max":              _v_models_max,
     "amd_backend":             _v_amd_backend,
     "wsl_distro":              _v_str,
     "vllm_port":               _v_port,
@@ -1306,11 +1440,21 @@ def _router_device(c=None):
     Returns "" when there are no AMD GPUs (or the backend is unset), so the
     router falls back to llama.cpp's own auto-select. On a dual-backend binary
     (HIP + Vulkan) this is what makes the ROCm-vs-Vulkan choice deterministic.
+
+    Per-model mode: when any models.ini section carries its own `device` key,
+    this returns "" even with GPUs present — the router's own CLI args are
+    merged into every child preset by llama.cpp (preset.merge(base_preset)),
+    so a router-level --device would silently overwrite the per-section
+    values. Sections win by the router simply not passing a device.
     """
     c = c or cfg()
     backend = c.get("amd_backend") or "rocm"
+    try:
+        per_model = hardware.ini_defines_per_model_device(config.read_sections())
+    except OSError:
+        per_model = False  # unreadable ini -> fall back to the global list
     amd = hardware.detect_amd_gpus()
-    return hardware.device_list(backend, len(amd))
+    return hardware.router_device_for(backend, len(amd), per_model=per_model)
 
 
 def _record_server_bin(key, path):
@@ -1341,7 +1485,7 @@ def post_network(req):
     ini = config.ini_path()
     ok, err = router_ctl.restart(sbin, ini, c["router_port"],
                                  host, api_key, LOGDIR,
-                                 c.get("models_max", 5), device=_router_device(c))
+                                 c.get("models_max", config.DEFAULTS["models_max"]), device=_router_device(c))
     return (200 if ok else 500), {"ok": ok, "error": err, "host": host}
 
 
@@ -1372,7 +1516,7 @@ def post_engine_switch(req):
     ok, err = router_ctl.restart(sbin, config.ini_path(), c["router_port"],
                                  c.get("router_host", "127.0.0.1"),
                                  c.get("router_api_key", ""), LOGDIR,
-                                 c.get("models_max", 5), device=_router_device(c))
+                                 c.get("models_max", config.DEFAULTS["models_max"]), device=_router_device(c))
     return 200, {"ok": ok, "active_engine": engine, "error": err}
 
 
@@ -1397,7 +1541,7 @@ def post_amd_backend(req):
     ok, err = router_ctl.restart(sbin, config.ini_path(), c["router_port"],
                                  c.get("router_host", "127.0.0.1"),
                                  c.get("router_api_key", ""), LOGDIR,
-                                 c.get("models_max", 5), device=_router_device(c))
+                                 c.get("models_max", config.DEFAULTS["models_max"]), device=_router_device(c))
     return 200, {"ok": ok, "amd_backend": backend, "error": err}
 
 
@@ -1579,6 +1723,7 @@ POST_ROUTES = {
     "/api/models/unload":       post_model_unload,
     "/api/models/save":         post_model_save,
     "/api/models/delete":       post_model_delete,
+    "/api/models/backend":      post_model_backend,
     # llama.cpp-specific aliases
     "/api/save":                post_save,
     "/api/load":                post_load,

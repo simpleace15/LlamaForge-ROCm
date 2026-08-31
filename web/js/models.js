@@ -155,6 +155,7 @@ function editor(m) {
     : "filter knobs (e.g. cache, rope, temp)...";
   return `<div class="ed-live">${editorLive(m)}</div>
     <div class="toolbar ed-tools">
+      ${amdBackendSelect(m)}
       <input class="search" data-knobfilter placeholder="${esc(placeholder)}">
       <span class="chip ${onlySet?"on":""}" data-onlyset>Only set</span>
     </div>
@@ -164,6 +165,19 @@ function editor(m) {
       <span class="msg" data-msg></span>
     </div>
     <div class="ed-note">${editorNote(m)}</div>`;
+}
+/* Per-model AMD backend selector (llama.cpp only). Writes device= plus the
+   backend's benchmark-tuned flags into the model's ini section via
+   /api/models/backend; "auto" clears them so the router decides. */
+function amdBackendSelect(m) {
+  if (m.backend === "vllm") return "";
+  const cur = (m.settings && m.settings.device) || "";
+  const val = /Vulkan/i.test(String(cur)) ? "vulkan" : (/^HIP/i.test(String(cur)) ? "rocm" : "auto");
+  return `<select data-amd-backend="${esc(m.id)}" title="Per-model GPU backend. Vulkan: RDNA2 multi-GPU; ROCm: HIP (faster pp on some models). Auto = no device pin, llama.cpp auto-selects. Applied on next load of this model.">
+    <option value="auto" ${val===""?"selected":""}>Backend: auto</option>
+    <option value="vulkan" ${val==="vulkan"?"selected":""}>Vulkan</option>
+    <option value="rocm" ${val==="rocm"?"selected":""}>ROCm (HIP)</option>
+  </select>`;
 }
 function applyKnobFilter(root) {
   $$(".fld", root).forEach(f => {
@@ -209,10 +223,14 @@ function rowHead(m, showBackend) {
   const be = m.backend || "llamacpp";
   const beTag = showBackend
     ? `<span class="tag be-${esc(be)}">${esc(BACKEND_LABEL[be] || be)}</span>` : "";
+  // per-model GPU backend actually in effect (from the child's --device arg
+  // exposed by model_state()); only shown when pinned — auto stays untagged
+  const amdTag = m.device
+    ? `<span class="tag be-${/vulkan/i.test(m.device)?"vllm":"llamacpp"}">${/vulkan/i.test(m.device)?"VULKAN":"ROCm"}</span>` : "";
   return `${compareMode?`<input type="checkbox" class="cmp" data-cmp="${esc(m.id)}" ${cmpSet.has(m.id)?"checked":""} title="pick to compare">`:""}
         <span class="led ${loaded?"loaded":""} ${m.failed?"failed":""}"></span>
         <span class="fav ${isFav?"on":""}" data-fav="${esc(m.id)}" title="${isFav?"unfavorite":"favorite"}">&starf;</span>
-        <span class="mid" title="${esc(m.id)}">${esc(m.id)}${beTag}${vis?'<span class="tag vis">vision</span>':''}${!m.in_ini?'<span class="tag">auto</span>':''}${m.endpoint?`<span class="tag ep" data-ep="${esc(m.endpoint)}" title="click to copy endpoint">${esc(m.endpoint.replace('http://',''))}</span>`:''}</span>
+        <span class="mid" title="${esc(m.id)}">${esc(m.id)}${beTag}${vis?'<span class="tag vis">vision</span>':''}${!m.in_ini?'<span class="tag">auto</span>':''}${m.endpoint?`<span class="tag ep" data-ep="${esc(m.endpoint)}" title="click to copy endpoint">${esc(m.endpoint.replace('http://',''))}</span>`:''}${m.device?`<span class="tag" data-amdtag="${esc(m.device)}" title="device pin: ${esc(m.device)}">${/vulkan/i.test(m.device)?"VULKAN":"ROCm"}</span>`:''}</span>
         <span class="ctxpill"><span class="k">CTX</span> ${esc(m.eff_ctx)}</span>
         <span class="stat ${loaded?"loaded":""}" style="${stuckSecs>=20?"color:var(--red)":""}">${m.failed?"FAILED":esc(m.status)}${stuckSecs>=20?` (${stuckSecs}s, check log)`:""}</span>
         ${quickBtn(m)}
@@ -223,7 +241,7 @@ function rowHead(m, showBackend) {
 function headSig(m, cols, showBackend) {
   return JSON.stringify([m.id, m.status, m.failed, m.backend, m.endpoint, m.eff_ctx,
     m.modalities, m.in_ini, favs.has(m.id), compareMode, cmpSet.has(m.id),
-    loadQ.findIndex(j => j.id === m.id), loadingSecs(m) >= 20, cols, showBackend]);
+    loadQ.findIndex(j => j.id === m.id), loadingSecs(m) >= 20, cols, showBackend, m.device]);
 }
 // Keyed so only a different model, backend or schema rebuilds the knob grid.
 function knobSig(m) {
@@ -241,6 +259,13 @@ export function renderModels() {
   if (count) count.textContent = `${nLoaded} LOADED / ${all.length} TOTAL` +
     (ms.length !== all.length ? ` · ${ms.length} shown` : "");
   document.title = nLoaded ? `▸${nLoaded} LLAMAFORGE` : "LLAMAFORGE";
+  // resident-set feasibility warning (vram planner, advisory — hidden unless set)
+  const rw = $("#resident-warn");
+  if (rw) {
+    const warn = S.STATE.resident_warning || "";
+    setHTML(rw, warn ? `<span class="warn">⚠ ${esc(warn)}</span>` : "");
+    rw.hidden = !warn;
+  }
   const cols = compareMode ? "16px 14px 18px 1fr auto auto auto auto"
                            : "14px 18px 1fr auto auto auto auto";
   const showBackend = backendTagNeeded();
@@ -608,6 +633,24 @@ export function initModels() {
     if (!row || e.target.dataset.k == null) return;
     const msg = $("[data-msg]", row);
     if (msg) { msg.className = "msg work"; msg.textContent = "unsaved changes"; }
+  });
+
+  // per-model AMD backend dropdown: applies immediately (writes device= +
+  // benchmark flags into the ini and reloads the model if it was loaded)
+  document.addEventListener("change", async e => {
+    const sel = e.target.closest("#view-models [data-amd-backend]");
+    if (!sel) return;
+    const modelId = sel.dataset.amdBackend, backend = sel.value;
+    sel.disabled = true;
+    try {
+      const r = await api("/api/models/backend", {model: modelId, backend});
+      if (r.ok) {
+        toast(`Backend "${backend}" applied to ${modelId}` +
+              (r.applied && Object.keys(r.applied).length ? "" : " (nothing to change)"), "ok");
+        invalidateKnobs(); await refresh(true);
+      } else toast(r.error || "backend change failed", "err");
+    } catch (err) { toast("Backend change failed: " + err, "err"); }
+    sel.disabled = false;
   });
 
   // keyboard map: 1-7 tabs, / search, j/k or arrows navigate, Enter expand,

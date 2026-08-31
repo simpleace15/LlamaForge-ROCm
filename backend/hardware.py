@@ -260,6 +260,40 @@ def device_list(backend, count):
     prefix = "Vulkan" if backend == "vulkan" else "HIP"
     return ",".join(f"{prefix}{i}" for i in range(count))
 
+
+def ini_defines_per_model_device(ini):
+    """True when any model section carries its own `device` key.
+
+    The router overlays its own CLI args onto every child preset (upstream
+    server-models.cpp: preset.merge(base_preset)) and LLAMA_ARG_DEVICE is not
+    stripped from that overlay - so a router-level --device would silently
+    clobber every per-section device (verified live against llama.cpp master
+    85c5522). Callers therefore skip the router-level --device entirely when
+    any section defines its own, letting sections decide per model.
+    A `device` key in [*] is a global default, not a per-model selection, and
+    a blank/comment-only value means "unset" - neither counts.
+    """
+    for name, sect in (ini or {}).items():
+        if name in ("*",):
+            continue
+        val = (sect or {}).get("device")
+        if val is not None and val.strip() and not str(val).lstrip().startswith("#"):
+            return True
+    return False
+
+
+def router_device_for(backend, count, per_model=False):
+    """The --device list for the router launch, honoring per-model mode.
+
+    per_model=True (any models.ini section sets its own device=) returns ""
+    even with GPUs present, so llama.cpp never receives a router-level
+    --device that would override the sections. per_model=False keeps the
+    historical global list (device_list(), empty when count <= 0).
+    """
+    if per_model:
+        return ""
+    return device_list(backend, count)
+
 def detect_all_gpus():
     """NVIDIA + AMD GPUs combined, for VRAM-fit ratings and auto-tune. Each row
     carries `vram_mib` and `name`; NVIDIA rows add `compute_cap`, AMD rows add

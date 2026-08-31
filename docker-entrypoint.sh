@@ -96,20 +96,51 @@ PY
 # dual-backend image this is the on-instance ROCm-vs-Vulkan switch; the device
 # list names every AMD GPU of that backend so offloading is deterministic.
 # Empty when no AMD GPUs are detected (llama.cpp auto-selects then).
-DEVICE="$(python3 - "$CFG" <<'PY'
+#
+# Per-model backend mode: if ANY model section in the ini carries its own
+# `device` key, the router-level --device is OMITTED entirely — llama.cpp's
+# router merges its own CLI args into every child preset, so a global --device
+# would silently override each section's per-model choice (verified against
+# llama.cpp master 85c5522). Sections win by the router not passing one.
+DEVICE="$(python3 - "$CFG" "$INI" <<'PY'
 import json, os, sys
 try:
     cfg = json.load(open(sys.argv[1]))
 except Exception:
     cfg = {}
-backend = cfg.get("amd_backend", "rocm")
-prefix = "Vulkan" if backend == "vulkan" else "HIP"
-# Count AMD GPUs via the DRM render nodes (Vulkan needs no /dev/kfd).
+
+# Parse models.ini just enough to find per-section device= keys (a `device`
+# key in [*] is a global default, not a per-model selection, and doesn't
+# suppress the router's own flag).
+per_model = False
 try:
-    n = len([x for x in os.listdir("/dev/dri") if x.startswith("renderD")])
-except Exception:
-    n = 0
-print(",".join(f"{prefix}{i}" for i in range(n)) if n else "")
+    cur = None
+    with open(sys.argv[2]) as f:
+        for line in f:
+            s = line.strip()
+            if s.startswith("[") and s.endswith("]"):
+                cur = s[1:-1]
+                continue
+            if cur in (None, "*") or "=" not in s:
+                continue
+            k, v = s.split("=", 1)
+            if k.strip() == "device" and v.strip():
+                per_model = True
+                break
+except OSError:
+    pass
+
+if per_model:
+    print("")          # sections own the device; router CLI must stay silent
+else:
+    backend = cfg.get("amd_backend", "rocm")
+    prefix = "Vulkan" if backend == "vulkan" else "HIP"
+    # Count AMD GPUs via the DRM render nodes (Vulkan needs no /dev/kfd).
+    try:
+        n = len([x for x in os.listdir("/dev/dri") if x.startswith("renderD")])
+    except Exception:
+        n = 0
+    print(",".join(f"{prefix}{i}" for i in range(n)) if n else "")
 PY
 )"
 

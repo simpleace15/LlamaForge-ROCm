@@ -31,7 +31,7 @@ DEFAULTS = {
     "models_ini":  os.path.join(_CONFIG_DIR, "models.ini"),
     "model_dirs":  [],                       # directories to scan for GGUFs
     "router_port": 8080,
-    "models_max":  5,                        # max concurrently-resident models in the router (llama-swap LRU semantics)
+    "models_max":  5,                        # max concurrently-resident models in the router (user-configurable; see resident-set warning)
     "ctx_size":    150000,                   # global [*] ctx-size default; per-model overrides win
     "panel_port":  8090,
     "panel_host":  "127.0.0.1",               # dashboard bind address; 0.0.0.0 = reachable on the LAN / from a Docker host
