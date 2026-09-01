@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LlamaForge-ROCm container entrypoint.
+# LlamaForge-AMD container entrypoint.
 #
 # The image ships a pre-built llama-server (ROCm/HIP) at /usr/local/bin/llama-server,
 # so there is no llama.cpp source checkout to build inside the container. This

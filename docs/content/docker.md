@@ -6,8 +6,9 @@ order: 5
 
 # Docker & ROCm
 
-LlamaForge-ROCm adds two things upstream LlamaForge lacks: **ROCm (AMD GPU)
-support** and a **Docker deployment**. This page covers both — how to build the
+LlamaForge-AMD adds two things upstream LlamaForge lacks: **full AMD GPU
+support (ROCm AND Vulkan dual-backend, runtime-toggleable)** and a **Docker deployment**. This
+page covers both — how to build the
 ROCm variant, and how to run it in a container on Unraid (or any Docker host
 with AMD GPUs).
 
@@ -82,10 +83,10 @@ and falls back to the DRM card vendor/device IDs.
 
 ```bash
 # Dual-backend (default): HIP + Vulkan in one binary, switch at runtime
-docker build -t llamaforge-rocm .
+docker build -t llamaforge-amd .
 
 # Narrow to a single backend for a smaller/faster build
-docker build --build-arg AMD_BACKEND=rocm -t llamaforge-rocm .
+docker build --build-arg AMD_BACKEND=rocm -t llamaforge-amd .
 docker build --build-arg AMD_BACKEND=vulkan -t llamaforge-vulkan .
 ```
 
@@ -103,13 +104,13 @@ instance serves both ROCm and Vulkan without a rebuild or a second container.
 
 ```bash
 # Broad default targets (slow build, works on most AMD GPUs)
-docker build -t llamaforge-rocm .
+docker build -t llamaforge-amd .
 
 # Narrow to your GPU for a much faster build
-docker build --build-arg AMDGPU_TARGETS=gfx1030 -t llamaforge-rocm .
+docker build --build-arg AMDGPU_TARGETS=gfx1030 -t llamaforge-amd .
 
 # Pin a specific llama.cpp ref
-docker build --build-arg LLAMACPP_REF=master -t llamaforge-rocm .
+docker build --build-arg LLAMACPP_REF=master -t llamaforge-amd .
 ```
 
 The image is a two-stage build on `rocm/dev-ubuntu-24.04:7.2.1` (matching
@@ -178,9 +179,9 @@ multi-GPU and large-context KV caches.
 ### Verify the GPUs are visible
 
 ```bash
-docker exec llamaforge-rocm rocm-smi
+docker exec llamaforge-amd rocm-smi
 # or, if rocm-smi isn't in the image:
-docker exec llamaforge-rocm ls /dev/dri/renderD*
+docker exec llamaforge-amd ls /dev/dri/renderD*
 ```
 
 If `rocm-smi` lists no GPUs, check the three passthrough items above — a

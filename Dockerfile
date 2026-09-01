@@ -1,4 +1,4 @@
-# LlamaForge-ROCm — Docker image with ROCm/HIP + Vulkan llama.cpp + the backend.
+# LlamaForge-AMD — Docker image with ROCm/HIP + Vulkan llama.cpp + the backend.
 #
 # Builds llama.cpp with BOTH GGML_HIP=ON and GGML_VULKAN=ON into a single
 # llama-server binary (default), so one instance can switch between ROCm and
@@ -7,11 +7,11 @@
 # backend for a smaller/faster build when you only ever want one.
 #
 # Build examples:
-#   docker build -t llamaforge-rocm .                                  # dual-backend (HIP + Vulkan)
-#   docker build --build-arg AMDGPU_TARGETS=gfx1030 -t llamaforge-rocm .  # narrow HIP targets, faster build
-#   docker build --build-arg AMD_BACKEND=rocm -t llamaforge-rocm .       # HIP only
+#   docker build -t llamaforge-amd .                                  # dual-backend (HIP + Vulkan)
+#   docker build --build-arg AMDGPU_TARGETS=gfx1030 -t llamaforge-amd .  # narrow HIP targets, faster build
+#   docker build --build-arg AMD_BACKEND=rocm -t llamaforge-amd .       # HIP only
 #   docker build --build-arg AMD_BACKEND=vulkan -t llamaforge-vulkan .   # Vulkan only
-#   docker build --build-arg LLAMACPP_REF=master -t llamaforge-rocm .    # pin a llama.cpp ref
+#   docker build --build-arg LLAMACPP_REF=master -t llamaforge-amd .    # pin a llama.cpp ref
 
 # ---- stage 1: build llama.cpp ----
 # The ROCm toolchain image (-complete) carries hipcc/hipconfig needed to

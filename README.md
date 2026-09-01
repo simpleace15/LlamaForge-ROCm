@@ -20,10 +20,11 @@
   <img alt="repo size" src="https://img.shields.io/github/repo-size/dadwritestech/LlamaForge?style=flat-square&labelColor=0f1315&color=6b7a7e&cacheSeconds=1800">
 </p>
 
-# LlamaForge-ROCm
+# LlamaForge-AMD
 
 > **A fork of [LlamaForge](https://github.com/dadwritestech/LlamaForge) adding
-> ROCm (AMD GPU) support and Docker deployment.** Everything else is upstream
+> full AMD GPU support — ROCm AND Vulkan as runtime-configurable dual backends —
+> plus Docker deployment.** Everything else is upstream
 > LlamaForge, kept in sync. This fork is an independent project, not affiliated
 > with the upstream LlamaForge maintainer, who is credited below.
 
@@ -195,7 +196,7 @@ run the LlamaForge backend in a container — the intended way to run this on
 
 ```bash
 # Build (narrow AMDGPU_TARGETS to your GPU for a faster build)
-docker build --build-arg AMDGPU_TARGETS=gfx1030 -t llamaforge-rocm .
+docker build --build-arg AMDGPU_TARGETS=gfx1030 -t llamaforge-amd .
 
 # Or use docker-compose (edit the renderD* device list to match your GPUs first)
 docker compose up -d
@@ -391,8 +392,9 @@ preview, so priorities follow feedback.
 
 ## Credits & license
 
-LlamaForge-ROCm is a fork of **[LlamaForge](https://github.com/dadwritestech/LlamaForge)**
-by [dadwritestech](https://github.com/dadwritestech), adding ROCm and Docker
+LlamaForge-AMD is a fork of **[LlamaForge](https://github.com/dadwritestech/LlamaForge)**
+by [dadwritestech](https://github.com/dadwritestech), adding full AMD GPU support
+(ROCm AND Vulkan dual-backend) and Docker
 support. Both are MIT-licensed ([LICENSE](LICENSE)). It builds and drives
 **[llama.cpp](https://github.com/ggml-org/llama.cpp)** - MIT, (c) The ggml authors -
 see [NOTICE](NOTICE) and [LICENSE.llama.cpp.txt](LICENSE.llama.cpp.txt).
