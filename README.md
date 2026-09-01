@@ -153,10 +153,27 @@ switch between ROCm and Vulkan at runtime — no rebuild, no second container.
 
 - **Switch it** by setting `"amd_backend": "vulkan"` in `config.json` (default
   `"rocm"`), or from the Setup tab's **AMD backend** dropdown. The router is
-  restarted with `--device Vulkan0,Vulkan1,Vulkan2` (or `HIP0,HIP1,HIP2`).
-- **Per-model override.** `--device` is also exposed as a per-model knob in the
-  Advanced editor, so a model can pin its own backend (e.g. model A on ROCm,
-  model B on Vulkan) instead of following the global default.
+  restarted with `--device Vulkan0,Vulkan1,Vulkan2` (or `ROCm0,ROCm1,ROCm2` —
+  llama.cpp names HIP devices `ROCm*`, per `--list-devices`).
+- **Per-model override.** The Models tab has a **Backend** dropdown (auto /
+  Vulkan / ROCm) per model; it writes `device=` plus that backend's
+  benchmark-tuned flags into the model's models.ini section (e.g. model A on
+  ROCm, model B on Vulkan, co-resident). When any section pins its own
+  `device=`, the router is launched with **no** `--device` at all — a
+  router-level flag would override every section (llama.cpp merges its own
+  CLI args into each child).
+- **`RADV_PERFTEST=nogttspill` is baked into the image.** Mesa < 26.x spills
+  large VRAM allocations through GTT, collapsing a ~62 GB workload to
+  8–10 tok/s; `nogttspill` restores 57–62 tok/s (measured on 3x V620,
+  RDNA2). It's set in the Dockerfile and re-exported by the entrypoint;
+  on Mesa ≥ 26.x it's the upstream default and harmless. Override with
+  `docker run -e RADV_PERFTEST=...` if you know better.
+- **`sleep-idle-seconds` for VRAM relief.** Small (≤16 GiB) models get
+  `sleep-idle-seconds = 900` suggested when you pick a backend: after 15
+  idle minutes the child sleeps and releases model+KV memory, and wakes on
+  the next request — this is what keeps a 62 GB agent model at full speed
+  while a voice model sits idle (upstream feature, llama.cpp PR #18228;
+  "sleeping" children show as such in `/props` and the model list).
 - **No `AMDGPU_TARGETS`** for Vulkan — that's HIP-specific. Vulkan builds need
   only `GGML_VULKAN=ON`.
 - **No `/dev/kfd`** for Vulkan — it uses only the DRM render nodes
@@ -196,6 +213,19 @@ big shared memory for multi-GPU and large-context KV caches), and mounts two
 volumes: `./config` (config.json, models.ini, logs) and `./models` (your GGUF
 files). The dashboard binds `0.0.0.0:8090` and the router `0.0.0.0:8080` inside
 the container; set `ROUTER_API_KEY` to require a key on the exposed router.
+
+**Pin the config volume to a host path** (e.g.
+`-v /mnt/cache_nvme/appdata/llamaforge-amd/config:/app/config`): an anonymous
+volume is recreated with the container, silently losing your config.json,
+models.ini, and stats.
+
+**Editing models.ini on disk:** the router re-reads the file on every
+`GET /models?reload=1` (the dashboard does this after each knob save), so
+section changes apply without a router restart — but a *running* model keeps
+its already-rendered args until it's unloaded and reloaded. `models_max` and
+other config.json keys are read at container start; changing them requires
+restarting the LlamaForge dashboard (which restarts the router with the new
+flag set).
 
 See [docs/content/docker.md](docs/content/docker.md) for the full Unraid walkthrough.
 

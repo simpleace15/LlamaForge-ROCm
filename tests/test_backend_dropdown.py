@@ -85,7 +85,7 @@ class BackendRouteTest(unittest.TestCase):
              mock.patch.object(config, "ini_path", return_value=self.ini):
             routes.post_model_backend(_FakeReq({"model": "m1", "backend": "rocm"}))
         sect = config.read_sections(self.ini).get("m1", {})
-        self.assertEqual(sect.get("device"), "HIP0,HIP1,HIP2")
+        self.assertEqual(sect.get("device"), "ROCm0,ROCm1,ROCm2")
         self.assertEqual(sect.get("ubatch-size"), "1024")
         self.assertEqual(sect.get("batch-size"), "4096")
 

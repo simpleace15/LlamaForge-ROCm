@@ -73,7 +73,7 @@ split or context length.
 
 Select Vulkan by setting `"amd_backend": "vulkan"` in `config.json` (default
 `"rocm"`), or from the Setup tab's **AMD backend** dropdown. The router is
-restarted with `--device Vulkan0,Vulkan1,Vulkan2` (or `HIP0,HIP1,HIP2`).
+restarted with `--device Vulkan0,Vulkan1,Vulkan2` (or `ROCm0,ROCm1,ROCm2`).
 Vulkan needs no `AMDGPU_TARGETS` and no `/dev/kfd` — only the DRM render nodes,
 which are already passed through. Device detection prefers `vulkaninfo --json`
 and falls back to the DRM card vendor/device IDs.
@@ -130,6 +130,25 @@ docker compose up -d
 The compose file mounts two volumes — `./config` (config.json, models.ini,
 logs) and `./models` (your GGUF files) — and exposes the router on `8080` and
 the dashboard on `8090`.
+
+**Pin the config volume to a host path** (`./config` as in the shipped
+compose, or e.g. `/mnt/cache_nvme/appdata/llamaforge-amd/config`). Do not
+let Docker create an anonymous volume for `/app/config`: an anonymous volume
+is recreated whenever the container is recreated, silently losing your
+config.json, models.ini, and stats.
+
+**Editing models.ini on disk:** the router re-reads the ini on every
+`GET /models?reload=1` (the dashboard triggers this after each knob save),
+so section changes apply without a router restart — but a *running* model
+keeps its already-rendered args until it's unloaded and reloaded.
+`models_max` and other config.json keys are read at container start;
+changing them requires restarting the dashboard/router.
+
+**RADV GTT-spill:** the image sets `RADV_PERFTEST=nogttspill` (in the
+Dockerfile and re-exported by the entrypoint). On Mesa < 26.x this is a
+5–6× fix for large models (a 62 GB workload fell to 8–10 tok/s without it,
+57–62 tok/s with it, measured on 3x V620); on Mesa ≥ 26.x it's the default
+anyway. Override in compose with `environment: RADV_PERFTEST=...` if needed.
 
 ### GPU passthrough (mandatory)
 

@@ -148,7 +148,9 @@ class TestVulkanDetection(unittest.TestCase):
 
 class TestDeviceList(unittest.TestCase):
     def test_rocm_three_gpus(self):
-        self.assertEqual(hardware.device_list("rocm", 3), "HIP0,HIP1,HIP2")
+        # llama.cpp names HIP devices ROCm* (GGML_CUDA_NAME = "ROCm" under
+        # GGML_USE_HIP, ggml-cuda.h) — verified live via --list-devices.
+        self.assertEqual(hardware.device_list("rocm", 3), "ROCm0,ROCm1,ROCm2")
 
     def test_vulkan_three_gpus(self):
         self.assertEqual(hardware.device_list("vulkan", 3), "Vulkan0,Vulkan1,Vulkan2")
@@ -157,8 +159,8 @@ class TestDeviceList(unittest.TestCase):
         self.assertEqual(hardware.device_list("rocm", 0), "")
         self.assertEqual(hardware.device_list("vulkan", 0), "")
 
-    def test_unknown_backend_defaults_to_hip(self):
-        self.assertEqual(hardware.device_list("cuda", 2), "HIP0,HIP1")
+    def test_unknown_backend_defaults_to_rocm(self):
+        self.assertEqual(hardware.device_list("cuda", 2), "ROCm0,ROCm1")
 
 
 class TestAmdVramBandwidth(unittest.TestCase):

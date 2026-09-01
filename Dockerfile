@@ -88,6 +88,13 @@ ARG AMD_BACKEND=both
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# RADV GTT-spill fix: Mesa < 26.x spills large VRAM allocations through GTT,
+# collapsing a 62 GB model to ~8-10 t/s (measured on the 3x V620 rig).
+# RADV_PERFTEST=nogttspill restores full speed (57-62 t/s). Unconditional in
+# the image; harmless on Mesa >= 26.x where the fix is default, and overridable
+# per-container via `docker run -e RADV_PERFTEST=...` (ENV is only a default).
+ENV RADV_PERFTEST=nogttspill
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 lsof libgomp1 \
     && rm -rf /var/lib/apt/lists/*

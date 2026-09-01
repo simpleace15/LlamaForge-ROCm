@@ -247,17 +247,23 @@ def detect_vulkan_gpus():
 
 
 def device_list(backend, count):
-    """Comma-separated `--device` list for a backend: 'HIP0,HIP1' or
+    """Comma-separated `--device` list for a backend: 'ROCm0,ROCm1' or
     'Vulkan0,Vulkan1'. Empty string when count <= 0 (caller should leave the
     device unset and let llama.cpp auto-select).
 
+    Device naming matches `llama-server --list-devices` exactly: llama.cpp
+    names HIP devices ROCm* (GGML_CUDA_NAME = "ROCm" when built with
+    GGML_USE_HIP, ggml-cuda.h) and Vulkan devices Vulkan* — verified live on
+    the 3x V620 rig; the historical 'HIP*' prefix here made children fail
+    instantly with "invalid device: HIP0".
+
     A dual-backend binary (GGML_HIP + GGML_VULKAN) needs an explicit list to
     offload deterministically — otherwise auto-select may pick the wrong
-    backend. Device names match `llama-server --list-devices` output.
+    backend.
     """
     if count <= 0:
         return ""
-    prefix = "Vulkan" if backend == "vulkan" else "HIP"
+    prefix = "Vulkan" if backend == "vulkan" else "ROCm"
     return ",".join(f"{prefix}{i}" for i in range(count))
 
 

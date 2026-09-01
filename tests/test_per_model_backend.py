@@ -17,7 +17,7 @@ class TestPerModelBackend(unittest.TestCase):
     def test_sections_with_device_detected(self):
         ini = {"*": {"ctx-size": "8192"},
                "big-mtp": {"model": "/m/a.gguf", "device": "Vulkan0,Vulkan1"},
-               "aux": {"model": "/m/b.gguf", "device": "HIP0"}}
+               "aux": {"model": "/m/b.gguf", "device": "ROCm0"}}
         self.assertTrue(hardware.ini_defines_per_model_device(ini))
 
     def test_sections_without_device(self):
@@ -30,7 +30,7 @@ class TestPerModelBackend(unittest.TestCase):
 
     def test_global_star_device_does_not_count(self):
         # [*] is the global cascade layer, not a per-model override.
-        ini = {"*": {"device": "HIP0,HIP1"}, "m": {"model": "/m/a.gguf"}}
+        ini = {"*": {"device": "ROCm0,ROCm1"}, "m": {"model": "/m/a.gguf"}}
         self.assertFalse(hardware.ini_defines_per_model_device(ini))
 
     def test_comments_and_blank_values_ignored(self):
@@ -53,7 +53,7 @@ class TestPerModelBackend(unittest.TestCase):
     def test_router_device_normal_when_no_per_model(self):
         self.assertEqual(
             hardware.router_device_for("rocm", 3, per_model=False),
-            "HIP0,HIP1,HIP2")
+            "ROCm0,ROCm1,ROCm2")
         self.assertEqual(
             hardware.router_device_for("vulkan", 3, per_model=False),
             "Vulkan0,Vulkan1,Vulkan2")

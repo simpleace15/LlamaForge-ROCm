@@ -13,7 +13,8 @@ import { on, emit } from "./bus.js";
 import { activeTab } from "./ui.js";
 
 const LITE_KNOBS = new Set(["n-gpu-layers","ctx-size","cache-type-k","cache-type-v",
-  "flash-attn","batch-size","ubatch-size","threads","tensor-split","temp","top-p"]);
+  "flash-attn","batch-size","ubatch-size","threads","tensor-split","temp","top-p",
+  "sleep-idle-seconds"]);
 
 /* ---------- view-local state ---------- */
 let openId = localStorage.getItem("lf_openid") || null;   // expanded row, persisted
@@ -172,7 +173,7 @@ function editor(m) {
 function amdBackendSelect(m) {
   if (m.backend === "vllm") return "";
   const cur = (m.settings && m.settings.device) || "";
-  const val = /Vulkan/i.test(String(cur)) ? "vulkan" : (/^HIP/i.test(String(cur)) ? "rocm" : "auto");
+  const val = /Vulkan/i.test(String(cur)) ? "vulkan" : (/^ROCm/i.test(String(cur)) ? "rocm" : (/^HIP/i.test(String(cur)) ? "rocm" : "auto"));
   return `<select data-amd-backend="${esc(m.id)}" title="Per-model GPU backend. Vulkan: RDNA2 multi-GPU; ROCm: HIP (faster pp on some models). Auto = no device pin, llama.cpp auto-selects. Applied on next load of this model.">
     <option value="auto" ${val===""?"selected":""}>Backend: auto</option>
     <option value="vulkan" ${val==="vulkan"?"selected":""}>Vulkan</option>

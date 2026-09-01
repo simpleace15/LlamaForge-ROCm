@@ -352,11 +352,11 @@ def _device_of(rm, sect, glob):
 
 
 def _amd_tag(sect, glob):
-    """'vulkan' / 'rocm' / '' from a model's device= value (Vulkan*/HIP*)."""
+    """'vulkan' / 'rocm' / '' from a model's device= value (Vulkan*/ROCm*)."""
     dev = (sect.get("device") or glob.get("device") or "")
     if dev.lower().startswith("vulkan"):
         return "vulkan"
-    if dev.upper().startswith("HIP"):
+    if dev.lower().startswith("rocm"):
         return "rocm"
     return ""
 
@@ -1013,8 +1013,12 @@ def post_model_backend(req):
 
     "auto" clears device= and the backend flag set (llama.cpp auto-selects);
     "vulkan"/"rocm" write device= plus that backend's benchmark-tuned
-    defaults. A loaded model is unloaded first: llama.cpp reads --device at
-    load time, so the change needs a reload to take effect.
+    defaults, and suggest sleep-idle-seconds for VRAM relief under
+    contention (upstream feature: idle children sleep, releasing model+KV
+    memory; --sleep-idle-seconds, llama.cpp PR #18228 — only auto-reloads,
+    never blocks a request). A loaded model is unloaded first: llama.cpp
+    reads --device at load time, so the change needs a reload to take
+    effect.
     """
     mid = req.body.get("model", "")
     backend = req.body.get("backend", "auto")
@@ -1042,6 +1046,18 @@ def post_model_backend(req):
                             "jinja": "true"})
         else:
             updates.update({"ubatch-size": "1024", "batch-size": "4096"})
+    # Sleep-on-idle default for smaller models (voice/aux): free VRAM when
+    # idle 15 min. Only filled when the section has none — never overrides
+    # a hand-set value. Large agents stay always-resident (no default).
+    sect = config.read_sections().get(mid, {})
+    if not sect.get("sleep-idle-seconds"):
+        try:
+            gib = os.path.getsize(sect.get("model") or "") / 1024**3 \
+                  if sect.get("model") and os.path.exists(sect.get("model")) else 0
+        except OSError:
+            gib = 0
+        if 0 < gib <= 16:                   # aux/voice-sized model
+            updates["sleep-idle-seconds"] = "900"
     if updates:
         config.set_keys(mid, updates)
         # --device is read at load time: a running model must reload to pick

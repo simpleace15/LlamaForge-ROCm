@@ -16,6 +16,15 @@ INI="$CONFIG_DIR/models.ini"
 # Point the backend at the mounted config volume (config.json + models.ini).
 export LLAMAFORGE_CONFIG_DIR="$CONFIG_DIR"
 
+# RADV GTT-spill fix (measured 5-6x on RDNA2: 8-10 t/s -> 57-62 t/s on a
+# 62 GB workload). Mesa < 26.x defaults to spilling large allocations through
+# GTT; nogttspill disables that. The Dockerfile already sets this ENV — the
+# export here keeps it true even when the image env is overridden by
+# compose/run without an explicit value. Set RADV_PERFTEST explicitly in
+# compose to override.
+export RADV_PERFTEST="${RADV_PERFTEST:-nogttspill}"
+echo "RADV_PERFTEST=$RADV_PERFTEST"
+
 mkdir -p "$CONFIG_DIR" "$MODELS_DIR" "$LOG_DIR"
 
 # Pin AMD GPUs to their high performance level. On passive/datacenter cards
@@ -134,7 +143,7 @@ if per_model:
     print("")          # sections own the device; router CLI must stay silent
 else:
     backend = cfg.get("amd_backend", "rocm")
-    prefix = "Vulkan" if backend == "vulkan" else "HIP"
+    prefix = "Vulkan" if backend == "vulkan" else "ROCm"
     # Count AMD GPUs via the DRM render nodes (Vulkan needs no /dev/kfd).
     try:
         n = len([x for x in os.listdir("/dev/dri") if x.startswith("renderD")])
